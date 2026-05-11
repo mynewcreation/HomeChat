@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Palawan Connect</title>
+<link rel="stylesheet" href="teams.css">
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <img src="M-LOGO.png" alt="Logo" class="logo" onerror="this.style.display='none'">
+    <span class="app-name">Palawan Connect</span>
+  </div>
+
+  <!-- Current User Profile (below title) -->
+  <div class="sidebar-profile">
+    <div class="user-avatar" id="myAvatar" onclick="toggleSettings()" style="cursor:pointer;position:relative;overflow:hidden;">
+      <span id="myAvatarInitial">M</span>
+      <img id="myAvatarImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;position:absolute;top:0;left:0;">
+    </div>
+    <div style="flex:1;min-width:0;">
+      <div class="user-name" id="myName">Mark</div>
+      <div class="user-status online">● Online</div>
+    </div>
+    <span class="settings-btn" onclick="toggleSettings()" title="Settings">⚙️</span>
+    <span class="settings-btn" onclick="logout()" title="Logout">🚪</span>
+  </div>
+
+  <!-- Search -->
+  <div class="sidebar-search">
+    <span>🔍</span>
+    <input type="text" id="searchInput" placeholder="Search..." oninput="filterChannels(this.value)">
+  </div>
+
+  <!-- Channels -->
+  <div class="section-label">CHANNELS</div>
+  <div id="channelList" class="channel-list"></div>
+  <button class="add-channel-btn" onclick="openAddChannelModal()">+ Add Channel</button>
+
+  <!-- Direct Messages -->
+  <div class="section-label" style="margin-top:16px;">DIRECT MESSAGES</div>
+  <div id="dmList" class="channel-list"></div>
+
+</div>
+
+<!-- MAIN AREA -->
+<div class="main">
+
+  <!-- Offline Banner -->
+  <div class="offline-banner" id="offlineBanner" style="display:none">
+    📡 You are offline — messages will sync when reconnected
+  </div>
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="hamburger" onclick="toggleSidebar()">☰</span>
+      <span class="channel-title" id="channelTitle"># general</span>
+      <span class="channel-desc" id="channelDesc">General discussion</span>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn" onclick="toggleConvSearch()" title="Search conversation">🔍 Search</button>
+      <button class="icon-btn" onclick="toggleMembers()" title="Members">👥 Members</button>
+      <button class="icon-btn" onclick="openVideoCall()" title="Video Call">📹 Call</button>
+      <button class="icon-btn sms-inbox-btn" id="smsInboxBtn" onclick="toggleSmsInbox()" title="SMS Inbox">📱 SMS <span id="smsInboxCount" class="sms-inbox-count" style="display:none">0</span></button>
+    </div>
+  </div>
+
+  <!-- Conversation Search Bar -->
+  <div class="conv-search-bar" id="convSearchBar">
+    <span>🔍</span>
+    <input type="text" id="convSearchInput" placeholder="Search messages or files..."
+      oninput="searchConversation(this.value)" autocomplete="off">
+    <span class="conv-search-count" id="convSearchCount"></span>
+    <span class="conv-search-close" onclick="closeConvSearch()">✕</span>
+  </div>
+
+  <!-- Messages Area -->
+  <div class="messages-area" id="messagesArea"></div>
+
+  <!-- Typing Indicator -->
+  <div class="typing-indicator" id="typingIndicator"></div>
+
+  <!-- Input Bar -->
+  <div class="input-bar">
+    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">📎</button>
+    <input type="file" id="fileInput" style="display:none" onchange="attachFile(this)">
+    <div class="input-wrapper">
+      <textarea id="msgInput" placeholder="Type a message..." rows="1"
+        onkeydown="handleKey(event)" oninput="autoResize(this); showTyping()"></textarea>
+    </div>
+    <button class="emoji-btn" onclick="toggleEmojiPicker()" title="Emoji">😊</button>
+    <button class="send-btn" onclick="sendMessage()">Send ➤</button>
+  </div>
+
+  <!-- Emoji Picker -->
+  <div class="emoji-picker" id="emojiPicker">
+    <span onclick="insertEmoji('😀')">😀</span><span onclick="insertEmoji('😂')">😂</span>
+    <span onclick="insertEmoji('👍')">👍</span><span onclick="insertEmoji('❤️')">❤️</span>
+    <span onclick="insertEmoji('🎉')">🎉</span><span onclick="insertEmoji('🔥')">🔥</span>
+    <span onclick="insertEmoji('✅')">✅</span><span onclick="insertEmoji('⚠️')">⚠️</span>
+    <span onclick="insertEmoji('📊')">📊</span><span onclick="insertEmoji('💰')">💰</span>
+    <span onclick="insertEmoji('🏦')">🏦</span><span onclick="insertEmoji('📋')">📋</span>
+  </div>
+</div>
+
+<!-- MEMBERS PANEL -->
+<div class="members-panel" id="membersPanel">
+  <div class="members-header">
+    <span>Members</span>
+    <span class="close-btn" onclick="toggleMembers()">✕</span>
+  </div>
+  <div id="membersList"></div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal-box">
+    <h3>Profile Settings</h3>
+
+    <!-- Avatar upload -->
+    <div class="avatar-upload-area">
+      <div class="avatar-preview" id="avatarPreview" onclick="document.getElementById('avatarInput').click()">
+        <span id="avatarPreviewInitial"></span>
+        <img id="avatarPreviewImg" src="" alt="" style="display:none">
+        <div class="avatar-overlay">📷 Change</div>
+      </div>
+      <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="previewAvatar(this)">
+      <p class="avatar-hint">Click photo to change</p>
+    </div>
+
+    <div class="form-group" style="margin-bottom:16px;">
+      <input type="text" id="settingName" placeholder=" ">
+      <label>Display Name</label>
+    </div>
+    <div class="form-group" style="margin-bottom:16px;">
+      <select id="settingStatus" style="width:100%;padding:10px;border-radius:6px;border:1px solid #ccc;">
+        <option value="online">🟢 Online</option>
+        <option value="away">🟡 Away</option>
+        <option value="busy">🔴 Busy</option>
+        <option value="offline">⚫ Offline</option>
+      </select>
+    </div>
+    <p id="settingsSaveMsg" style="font-size:13px;color:#0e7c63;min-height:18px;margin-bottom:8px;"></p>
+    <div class="modal-actions">
+      <button class="btn cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn confirm" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- VIDEO CALL MODAL -->
+<div class="modal-overlay" id="callModal">
+  <div class="modal-box" style="width:480px;">
+    <div class="call-header">
+      <span id="callTitle">📹 Video Call</span>
+      <span class="close-btn" onclick="closeCall()">✕</span>
+    </div>
+    <div class="call-area">
+      <div class="video-box main-video">
+        <span>📹</span>
+        <p>Your Camera</p>
+        <small id="callStatus">Connecting...</small>
+      </div>
+      <div class="video-box remote-video">
+        <span>👤</span>
+        <p id="remoteLabel">Waiting for others...</p>
+      </div>
+    </div>
+    <div class="call-controls">
+      <button class="call-btn" onclick="toggleMic(this)" title="Mute">🎤</button>
+      <button class="call-btn end-call" onclick="closeCall()" title="End Call">📵</button>
+      <button class="call-btn" onclick="toggleCam(this)" title="Camera">📷</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANNEL MANAGE MODAL -->
+<div class="modal-overlay" id="channelModal">
+  <div class="modal-box" style="width:400px;">
+    <h3 id="channelModalTitle">Add Channel</h3>
+
+    <div class="form-group" style="margin-bottom:16px;">
+      <input type="text" id="channelNameInput" placeholder=" ">
+      <label>Channel Name</label>
+    </div>
+    <div class="form-group" style="margin-bottom:16px;">
+      <input type="text" id="channelDescInput" placeholder=" ">
+      <label>Description (optional)</label>
+    </div>
+
+    <!-- Participants -->
+    <div style="margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:bold;color:#888;margin-bottom:8px;letter-spacing:.6px;">PARTICIPANTS</div>
+      <div id="participantsList" class="participants-list"></div>
+    </div>
+
+    <p id="channelModalError" style="color:#e74c3c;font-size:13px;min-height:18px;"></p>
+    <div class="modal-actions">
+      <button class="btn cancel" onclick="closeChannelModal()">Cancel</button>
+      <button class="btn confirm" id="channelModalSaveBtn" onclick="saveChannel()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANNEL CONTEXT MENU -->
+<div class="ctx-menu" id="channelCtxMenu">
+  <div class="ctx-item" onclick="ctxRename()">✏️ Rename</div>
+  <div class="ctx-item" onclick="ctxManage()">👥 Manage Participants</div>
+  <div class="ctx-item danger" onclick="ctxDelete()">🗑️ Delete Channel</div>
+</div>
+
+<!-- SMS INBOX PANEL -->
+<div class="sms-inbox-panel" id="smsInboxPanel">
+  <div class="members-header">
+    <span>📱 SMS Inbox</span>
+    <span class="close-btn" onclick="toggleSmsInbox()">✕</span>
+  </div>
+  <div style="padding:10px 14px;font-size:12px;color:#888;border-bottom:1px solid #eee;">
+    Messages received via SMS bridge
+  </div>
+  <div id="smsInboxList" style="overflow-y:auto;flex:1;"></div>
+  <div style="padding:10px 14px;border-top:1px solid #eee;">
+    <button onclick="clearSmsInboxPanel()" style="width:100%;padding:8px;background:#fde8e8;color:#c0392b;border:none;border-radius:8px;cursor:pointer;font-size:13px;">🗑️ Clear Inbox</button>
+  </div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="offline-store.js"></script>
+<script src="teams.js"></script>
+</body>
+</html>
