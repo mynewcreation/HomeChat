@@ -792,9 +792,64 @@ async function reactTo(msgId, emoji) {
 
 function addReaction(msgId, emoji) { reactTo(msgId, emoji); }
 
-// DELETE MESSAGE
-async function deleteMsg(msgId) {
-  await db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId).delete();
+// DELETE MESSAGE — with 5-second undo window
+var _deleteTimers = {}; // pending delete timers keyed by msgId
+
+function deleteMsg(msgId) {
+  // Find the message group and hide it immediately (optimistic UI)
+  var group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (group) group.style.opacity = '0.3';
+
+  // Show undo toast
+  showUndoToast(msgId, function() {
+    // UNDO — restore the message
+    if (group) group.style.opacity = '';
+    clearTimeout(_deleteTimers[msgId]);
+    delete _deleteTimers[msgId];
+  });
+
+  // Schedule actual delete after 5 seconds
+  _deleteTimers[msgId] = setTimeout(async function() {
+    delete _deleteTimers[msgId];
+    if (group) group.remove();
+    try {
+      await db.collection('channels').doc(state.currentChannel)
+        .collection('messages').doc(msgId).delete();
+    } catch(e) {
+      // If delete fails, restore the message
+      if (group) { group.style.opacity = ''; group.style.display = ''; }
+    }
+  }, 5000);
+}
+
+function showUndoToast(msgId, onUndo) {
+  var toast = document.getElementById('undoToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'undoToast';
+    toast.className = 'undo-toast';
+    document.body.appendChild(toast);
+  }
+
+  // Clear any existing timer on the toast itself
+  clearTimeout(toast._hideTimer);
+
+  toast.innerHTML =
+    '<span>Message deleted</span>' +
+    '<button class="undo-btn" id="undoBtn">Undo</button>';
+
+  document.getElementById('undoBtn').onclick = function() {
+    onUndo();
+    toast.classList.remove('show');
+  };
+
+  toast.classList.remove('show');
+  void toast.offsetWidth; // reflow to restart animation
+  toast.classList.add('show');
+
+  toast._hideTimer = setTimeout(function() {
+    toast.classList.remove('show');
+  }, 5000);
 }
 
 // FILE ATTACH
@@ -1368,6 +1423,19 @@ document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateSmsInboxBadge, 500);
   checkNotificationPermission();
   updateFavicon(false); // set initial purple favicon
+
+  // ── Mobile keyboard fix ──────────────────────────────────
+  // When the virtual keyboard opens on mobile, scroll the input into view
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function() {
+      var inputBar = document.getElementById('msgInput');
+      if (!inputBar) return;
+      // Small delay to let the browser finish resizing
+      setTimeout(function() {
+        inputBar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }, 100);
+    });
+  }
 });
 
 // ── QUOTE MESSAGE ──────────────────────────────────────────

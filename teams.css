@@ -27,6 +27,7 @@
 body {
   display: flex;
   height: 100vh;
+  height: 100dvh; /* dynamic viewport — shrinks when mobile keyboard opens */
   overflow: hidden;
   background: var(--bg-main);
   font-size: 13px;
@@ -1207,6 +1208,8 @@ body {
     font-size: 14px;
     position: relative;
     overflow: hidden;
+    height: 100dvh;
+    height: 100vh; /* fallback for older browsers */
   }
 
   /* ── Sidebar becomes a full-height overlay drawer ── */
@@ -1240,10 +1243,39 @@ body {
 
   .sidebar-backdrop.show { display: block; }
 
-  /* ── Main takes full width ── */
+  /* ── Main takes full width, flex column so input stays at bottom ── */
   .main {
     width: 100%;
     min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Messages area fills all space above input */
+  .messages-area {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Input bar always visible at bottom */
+  .input-bar {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
+    padding: 8px 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    background: var(--bg-topbar);
+    border-top: 1px solid var(--border);
+  }
+
+  /* Quote preview sticks just above input */
+  .quote-preview {
+    flex-shrink: 0;
   }
 
   /* ── Topbar ── */
@@ -1312,8 +1344,6 @@ body {
 
   /* ── Input bar ── */
   .input-bar {
-    padding: 8px 8px;
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
     gap: 5px;
   }
 
@@ -1564,5 +1594,60 @@ body {
   /* Update placeholder text on mobile */
   #msgInput::placeholder {
     font-size: 13px;
+  }
+}
+
+/* ── UNDO DELETE TOAST ── */
+.undo-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #2a2b4a;
+  color: var(--text-light);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  white-space: nowrap;
+}
+
+.undo-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+.undo-btn {
+  background: var(--teams-purple);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.undo-btn:hover { background: var(--teams-accent); }
+
+@media (max-width: 640px) {
+  .undo-toast {
+    left: 12px;
+    right: 12px;
+    transform: translateX(0) translateY(20px);
+    bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+  .undo-toast.show {
+    transform: translateX(0) translateY(0);
   }
 }
