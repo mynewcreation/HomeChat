@@ -1,7 +1,7 @@
 {
-  "name": "Palawan Connect",
-  "short_name": "PConnect",
-  "description": "Palawan Connect Team Chat",
+  "name": "MyHome Connect",
+  "short_name": "MHConnect",
+  "description": "MyHome Connect Team Chat",
   "start_url": "/teams.html",
   "display": "standalone",
   "background_color": "#0d0d1a",

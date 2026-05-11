@@ -1,6 +1,6 @@
 /**
  * ─────────────────────────────────────────────────────────────
- *  offline-store.js  —  Palawan Connect Local Storage Layer
+ *  offline-store.js  —  MyHome Connect Local Storage Layer
  *
  *  Handles all offline data: cached users, cached channels,
  *  cached messages, outbox queue, and incoming SMS queue.

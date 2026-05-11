@@ -1330,7 +1330,7 @@ function escapeHtml(str) {
 
 function updateTabTitle() {
   var total = Object.values(state.unread).reduce(function(sum, n) { return sum + n; }, 0);
-  document.title = total > 0 ? '(' + total + ') Palawan Connect' : 'Palawan Connect';
+  document.title = total > 0 ? '(' + total + ') MyHome Connect' : 'MyHome Connect';
   updateFavicon(total > 0);
   updateTaskbarBadge(total);
 }
