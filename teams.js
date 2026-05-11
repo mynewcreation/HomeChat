@@ -400,13 +400,31 @@ function dmChannelId(a, b) {
 function renderMembers(users) {
   const list = document.getElementById('membersList');
   list.innerHTML = '';
+  const isAdmin = state.currentUser.name === 'Admin'; // only Admin can remove users
+
   users.forEach(function(u) {
+    const isSelf = u.name === state.currentUser.name;
     const div = document.createElement('div');
     div.className = 'member-item';
+
     div.innerHTML =
-      '<div class="user-avatar" style="background:' + u.color + ';width:30px;height:30px;font-size:12px">' + u.name[0] + '</div>' +
-      '<span style="flex:1">' + u.name + '</span>' +
+      '<div class="user-avatar" style="background:' + u.color + ';width:30px;height:30px;font-size:12px;flex-shrink:0">' + u.name[0] + '</div>' +
+      '<span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(u.name) + (isSelf ? ' <span style="font-size:10px;color:var(--text-muted)">(you)</span>' : '') + '</span>' +
       '<span class="dot ' + (u.status || 'offline') + '"></span>';
+
+    // Add ... menu button for every user (admin can remove others; anyone can remove themselves)
+    if (!isSelf || isAdmin) {
+      const menuBtn = document.createElement('span');
+      menuBtn.className = 'member-menu-btn';
+      menuBtn.textContent = '···';
+      menuBtn.title = 'Options';
+      menuBtn.onclick = function(e) {
+        e.stopPropagation();
+        openMemberCtxMenu(e, u);
+      };
+      div.appendChild(menuBtn);
+    }
+
     list.appendChild(div);
   });
 }
@@ -970,6 +988,97 @@ async function ctxDelete() {
 // Add channel button
 function openAddChannelModal() {
   openChannelModal('add', null);
+}
+
+// ── MEMBER CONTEXT MENU ──────────────────────────────────────
+var _ctxMemberUser = null;
+
+function openMemberCtxMenu(e, user) {
+  _ctxMemberUser = user;
+  const menu = document.getElementById('memberCtxMenu');
+  menu.classList.add('show');
+  const x = Math.min(e.clientX, window.innerWidth  - 220);
+  const y = Math.min(e.clientY, window.innerHeight - 80);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+}
+
+function closeMemberCtxMenu() {
+  document.getElementById('memberCtxMenu').classList.remove('show');
+  _ctxMemberUser = null;
+}
+
+async function ctxRemoveMember() {
+  const u = _ctxMemberUser;
+  closeMemberCtxMenu();
+  if (!u) return;
+
+  const isSelf = u.name === state.currentUser.name;
+  const confirmMsg = isSelf
+    ? 'Remove your own account and clear all your chat history? This cannot be undone.'
+    : 'Remove "' + u.name + '" and delete all their chat history across all channels? This cannot be undone.';
+
+  if (!confirm(confirmMsg)) return;
+
+  if (!isOnline()) {
+    alert('This action requires an internet connection.');
+    return;
+  }
+
+  try {
+    // 1. Delete all messages by this user across all channels
+    const allChannelIds = channels.map(function(c) { return c.id; });
+
+    // Also include all DM channels involving this user
+    const usersSnap = await db.collection('users').get();
+    usersSnap.docs.forEach(function(d) {
+      const name = d.data().name;
+      if (name !== u.name) {
+        allChannelIds.push(dmChannelId(u.name, name));
+      }
+    });
+
+    // Delete messages in batches
+    for (var i = 0; i < allChannelIds.length; i++) {
+      const chId = allChannelIds[i];
+      const msgsSnap = await db.collection('channels').doc(chId)
+        .collection('messages')
+        .where('sender', '==', u.name)
+        .get();
+
+      const batch = db.batch();
+      msgsSnap.docs.forEach(function(d) { batch.delete(d.ref); });
+      if (!msgsSnap.empty) await batch.commit();
+
+      // Clear local cache for this channel
+      const cached = OfflineStore.getCachedMessages(chId);
+      const filtered = cached.filter(function(m) { return m.sender !== u.name; });
+      OfflineStore.cacheMessages(chId, filtered);
+    }
+
+    // 2. Delete the user document from Firestore
+    if (u.id) {
+      await db.collection('users').doc(u.id).delete();
+    }
+
+    // 3. Remove from local cache
+    OfflineStore.removeCachedUser(u.id);
+
+    // 4. If removing self — log out
+    if (isSelf) {
+      sessionStorage.removeItem('teamsUser');
+      window.location.href = 'index.html';
+      return;
+    }
+
+    // 5. Re-render messages if current channel had their messages
+    loadChannel(state.currentChannel);
+
+    showSyncToast('✓ ' + u.name + ' removed and history cleared.');
+
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
 }
 
 // Open modal
@@ -1712,7 +1821,10 @@ document.addEventListener('click', function(e) {
   if (ctxMenu && !ctxMenu.contains(e.target) && !e.target.classList.contains('ch-menu-btn')) {
     closeCtxMenu();
   }
-
+  const memberCtx = document.getElementById('memberCtxMenu');
+  if (memberCtx && !memberCtx.contains(e.target) && !e.target.classList.contains('member-menu-btn')) {
+    closeMemberCtxMenu();
+  }
   // Mobile: close message action menus when tapping outside
   if (window.innerWidth <= 640) {
     if (!e.target.closest('.msg-bubble')) {

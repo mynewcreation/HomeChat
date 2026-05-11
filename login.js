@@ -67,7 +67,7 @@ async function handleLogin(e) {
       password: pass, color: user.color, status: 'online',
     });
 
-    await doc.ref.update({ status: 'online' });
+    await doc.ref.update({ status: 'online' }).catch(function() {});
 
     sessionStorage.setItem('teamsUser', JSON.stringify({
       id: doc.id, name: user.name, color: user.color, status: 'online',
@@ -75,7 +75,13 @@ async function handleLogin(e) {
     window.location.href = 'teams.html';
 
   } catch (err) {
-    // Firestore error — try offline fallback
+    console.error('Login error:', err);
+    // Firestore permission error — rules may have expired
+    if (err.code === 'permission-denied') {
+      errEl.textContent = '⚠️ Database permission denied. Please update Firestore security rules to allow read/write.';
+      return;
+    }
+    // Try offline fallback
     const cached = OfflineStore.getCachedUser(name.toLowerCase());
     if (cached && cached.password === pass) {
       sessionStorage.setItem('teamsUser', JSON.stringify({

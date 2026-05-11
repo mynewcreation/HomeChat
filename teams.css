@@ -1203,47 +1203,14 @@ body {
    ══════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
 
-  /* ── Body / layout ── */
+  /* ── Layout ── */
   body {
-    font-size: 14px;
-    position: relative;
+    font-size: 13px;
     overflow: hidden;
     height: 100dvh;
-    height: 100vh; /* fallback for older browsers */
+    height: 100vh;
   }
 
-  /* ── Sidebar becomes a full-height overlay drawer ── */
-  .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    height: 100%;
-    width: 80vw;
-    max-width: 300px;
-    min-width: unset;
-    z-index: 9000;
-    transform: translateX(-100%);
-    transition: transform 0.28s ease;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.6);
-  }
-
-  /* When sidebar is open (JS adds .mobile-open) */
-  .sidebar.mobile-open {
-    transform: translateX(0);
-  }
-
-  /* Dim overlay behind sidebar */
-  .sidebar-backdrop {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.55);
-    z-index: 8999;
-  }
-
-  .sidebar-backdrop.show { display: block; }
-
-  /* ── Main takes full width, flex column so input stays at bottom ── */
   .main {
     width: 100%;
     min-width: 0;
@@ -1253,213 +1220,270 @@ body {
     overflow: hidden;
   }
 
-  /* Messages area fills all space above input */
+  /* ── Sidebar: slide-in drawer ── */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 100%;
+    width: 78vw;
+    max-width: 280px;
+    min-width: unset;
+    z-index: 9000;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.7);
+    overflow-y: auto;
+  }
+
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 8999;
+  }
+  .sidebar-backdrop.show { display: block; }
+
+  .sidebar-header { padding: 12px 10px; }
+  .app-name { font-size: 14px; }
+  .sidebar-profile { padding: 8px 10px; }
+  .section-label { padding: 5px 10px 2px; font-size: 10px; }
+  .channel-item { padding: 9px 10px; font-size: 13px; min-height: 36px; }
+  .add-channel-btn { margin: 4px 8px; font-size: 12px; width: calc(100% - 16px); }
+
+  /* ── Topbar ── */
+  .topbar {
+    height: 48px;
+    padding: 0 8px;
+    flex-shrink: 0;
+  }
+
+  .topbar-left { gap: 6px; }
+  .topbar-right { gap: 2px; }
+  .hamburger { font-size: 20px; padding: 4px; }
+  .channel-title { font-size: 13px; }
+  .channel-desc { display: none !important; }
+
+  .icon-btn {
+    padding: 5px 6px;
+    font-size: 17px;
+    border: none;
+    background: none;
+    min-width: 32px;
+    text-align: center;
+  }
+  .icon-btn .btn-label { display: none; }
+
+  /* ── Conversation search ── */
+  .conv-search-bar { padding: 5px 8px; }
+
+  /* ── Messages area ── */
   .messages-area {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-  }
-
-  /* Input bar always visible at bottom */
-  .input-bar {
-    flex-shrink: 0;
-    position: sticky;
-    bottom: 0;
-    z-index: 100;
     padding: 8px 8px;
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
-    background: var(--bg-topbar);
-    border-top: 1px solid var(--border);
   }
 
-  /* Quote preview sticks just above input */
-  .quote-preview {
-    flex-shrink: 0;
-  }
+  .msg-content { max-width: 82%; }
 
-  /* ── Topbar ── */
-  .topbar {
-    height: 52px;
-    padding: 0 10px;
-  }
-
-  /* Hide text labels on topbar buttons, keep emoji icons */
-  .icon-btn {
-    padding: 6px 8px;
-    font-size: 16px;
-    border: none;
-    background: none;
-  }
-
-  /* Hide button text, keep emoji */
-  .icon-btn .btn-label { display: none; }
-
-  .channel-title { font-size: 14px; }
-  .channel-desc  { display: none; }
-
-  /* ── Messages area ── */
-  .messages-area {
-    padding: 10px 10px;
-  }
-
-  /* Bubbles take more width on mobile */
-  .msg-content { max-width: 85%; }
-
-  /* Smaller avatars */
   .msg-avatar {
     width: 26px;
     height: 26px;
     font-size: 11px;
   }
 
-  /* Message actions: always visible on mobile (no hover) */
+  .msg-bubble {
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  .msg-meta { font-size: 10px; }
+  .msg-meta strong { font-size: 11px; }
+
+  .msg-image img {
+    max-width: 100%;
+    max-height: 200px;
+  }
+
+  .date-divider { font-size: 10px; margin: 6px 0; }
+  .typing-indicator { padding: 0 8px; font-size: 10px; }
+
+  /* ── Message actions: tap to show, inline below bubble ── */
   .msg-bubble .msg-actions {
+    display: none;
+  }
+
+  .msg-bubble.actions-open .msg-actions {
     display: flex;
     position: static;
     background: transparent;
     border: none;
     box-shadow: none;
-    padding: 4px 0 0 0;
-    gap: 4px;
+    padding: 5px 0 2px 0;
+    gap: 2px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    max-width: 100%;
+    overflow: hidden;
+    top: unset; right: unset; left: unset;
+    border-radius: 0;
+  }
+
+  .msg-group.mine .msg-bubble.actions-open .msg-actions {
     justify-content: flex-end;
   }
 
-  .msg-group.mine .msg-bubble .msg-actions {
-    justify-content: flex-start;
-  }
-
-  .msg-actions span {
-    font-size: 16px;
-    padding: 4px 6px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 6px;
-  }
-
-  /* Images fit screen */
-  .msg-image img {
-    max-width: 100%;
-    max-height: 220px;
-  }
-
-  /* ── Input bar ── */
-  .input-bar {
-    gap: 5px;
-  }
-
-  .input-wrapper {
-    padding: 6px 8px;
-  }
-
-  .input-wrapper textarea {
+  .msg-bubble.actions-open .msg-actions span {
     font-size: 14px;
+    padding: 4px 5px;
+    border-radius: 6px;
+    min-width: 28px;
+    text-align: center;
+    background: rgba(255,255,255,0.08);
+    flex-shrink: 0;
   }
 
-  .send-btn {
-    padding: 8px 12px;
-    font-size: 13px;
-  }
-
-  /* Hide "Send ➤" text, show only icon on very small screens */
-  @media (max-width: 380px) {
-    .send-btn-label { display: none; }
-    .send-btn::after { content: '➤'; }
-    .send-btn { padding: 8px 10px; }
-  }
-
-  /* ── Emoji picker ── */
-  .emoji-picker {
-    bottom: 60px;
-    right: 8px;
-    left: 8px;
-    width: auto;
+  .msg-bubble.actions-open .msg-actions span:active {
+    background: rgba(255,255,255,0.2);
   }
 
   /* ── Quote preview ── */
   .quote-preview {
-    padding: 5px 10px;
-    font-size: 12px;
+    flex-shrink: 0;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+
+  /* ── Input bar ── */
+  .input-bar {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
+    padding: 6px 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    background: var(--bg-topbar);
+    border-top: 1px solid var(--border);
+    gap: 4px;
+  }
+
+  .input-wrapper { padding: 5px 8px; }
+
+  .input-wrapper textarea {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .attach-btn, .emoji-btn, .newline-btn {
+    font-size: 18px;
+    padding: 4px 5px;
+  }
+
+  .newline-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    padding: 4px 6px;
+  }
+
+  .send-btn {
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  /* ── Emoji picker ── */
+  .emoji-picker {
+    bottom: 56px;
+    right: 6px;
+    left: 6px;
+    width: auto;
   }
 
   /* ── Edit row ── */
-  .msg-editing {
-    padding: 6px 10px;
-  }
+  .msg-editing { padding: 5px 8px; }
+  .msg-edit-actions span { display: none; }
+  .msg-edit-area { font-size: 13px; }
 
-  .msg-edit-actions span { display: none; } /* hide keyboard hint */
-
-  /* ── Members panel: full-screen overlay on mobile ── */
+  /* ── Members panel ── */
   .members-panel.open {
     position: fixed;
-    top: 0;
-    right: 0;
+    top: 0; right: 0;
     height: 100%;
     width: 75vw;
-    max-width: 280px;
+    max-width: 260px;
     z-index: 9000;
-    box-shadow: -4px 0 24px rgba(0,0,0,0.6);
+    box-shadow: -4px 0 20px rgba(0,0,0,0.6);
   }
 
-  /* ── SMS inbox panel: full-screen overlay on mobile ── */
+  /* ── SMS inbox panel ── */
   .sms-inbox-panel.open {
     position: fixed;
-    top: 0;
-    right: 0;
+    top: 0; right: 0;
     height: 100%;
     width: 85vw;
-    max-width: 320px;
+    max-width: 300px;
     z-index: 9000;
-    box-shadow: -4px 0 24px rgba(0,0,0,0.6);
+    box-shadow: -4px 0 20px rgba(0,0,0,0.6);
   }
 
-  /* ── Modals: full-width on mobile ── */
+  /* ── Modals ── */
   .modal-box {
-    width: calc(100vw - 32px);
+    width: calc(100vw - 24px);
     max-width: 400px;
-    padding: 18px 16px;
-    max-height: 90vh;
+    padding: 16px 14px;
+    max-height: 88dvh;
+    max-height: 88vh;
     overflow-y: auto;
   }
 
-  /* ── Toasts: full-width bottom ── */
+  .modal-box-call { width: calc(100vw - 24px); }
+  .modal-box-channel { width: calc(100vw - 24px); }
+
+  .call-area { flex-direction: column; }
+  .video-box { height: 100px; }
+
+  .participants-list { max-height: 180px; }
+
+  /* ── Toasts ── */
   .sms-toast {
-    left: 10px;
-    right: 10px;
+    left: 8px; right: 8px;
     max-width: unset;
-    bottom: calc(70px + env(safe-area-inset-bottom));
+    bottom: calc(65px + env(safe-area-inset-bottom));
     top: auto;
     transform: translateY(20px);
   }
-
   .sms-toast.show { transform: translateY(0); }
 
-  /* ── Conversation search bar ── */
-  .conv-search-bar {
-    padding: 6px 10px;
+  .undo-toast {
+    left: 8px; right: 8px;
+    transform: translateX(0) translateY(20px);
+    bottom: calc(65px + env(safe-area-inset-bottom));
   }
+  .undo-toast.show { transform: translateX(0) translateY(0); }
 
-  /* ── Date divider ── */
-  .date-divider { font-size: 10px; }
-
-  /* ── Typing indicator ── */
-  .typing-indicator { padding: 0 10px; }
-
-  /* ── Channel list items: bigger tap targets ── */
-  .channel-item {
-    padding: 10px 12px;
-    font-size: 14px;
-  }
-
-  /* ── Scrollbar hidden on mobile ── */
-  ::-webkit-scrollbar { width: 0; }
+  /* ── Scrollbar hidden ── */
+  ::-webkit-scrollbar { width: 0; height: 0; }
 }
 
-/* ── Safe area for notched phones (all sizes) ── */
+/* ── Very small phones (≤380px) ── */
+@media (max-width: 380px) {
+  .send-label { display: none; }
+  .topbar-right .icon-btn:nth-child(n+3) { display: none; } /* hide less-used buttons */
+  .msg-content { max-width: 88%; }
+}
+
+/* ── Safe area padding (all sizes) ── */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .input-bar {
-    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
   }
 }
+
 
 /* ── MODAL SIZE VARIANTS ── */
 .modal-box-call    { width: min(480px, calc(100vw - 24px)); }
@@ -1505,73 +1529,9 @@ body {
 }
 .sms-clear-btn:hover { background: rgba(196,49,75,0.3); }
 
-/* ── SEND BUTTON LABEL ── */
-@media (max-width: 380px) {
-  .send-label { display: none; }
-}
-
-/* ── MOBILE: message actions hidden, shown on tap ── */
-@media (max-width: 640px) {
-  /* Keep actions hidden by default */
-  .msg-bubble .msg-actions {
-    display: none;
-  }
-
-  /* Show when bubble has .actions-open — render BELOW the bubble, inline */
-  .msg-bubble.actions-open .msg-actions {
-    display: flex;
-    position: static;          /* no floating — sits in normal flow below text */
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 6px 0 2px 0;
-    gap: 2px;
-    flex-wrap: wrap;           /* wrap if too many icons */
-    justify-content: flex-start;
-    top: unset;
-    right: unset;
-    left: unset;
-    border-radius: 0;
-    max-width: 100%;           /* never wider than the bubble */
-    overflow: hidden;
-  }
-
-  /* Own messages — align actions to the right */
-  .msg-group.mine .msg-bubble.actions-open .msg-actions {
-    justify-content: flex-end;
-  }
-
-  /* Smaller, compact icons */
-  .msg-bubble.actions-open .msg-actions span {
-    font-size: 14px;
-    padding: 4px 5px;
-    border-radius: 6px;
-    min-width: 28px;
-    text-align: center;
-    background: rgba(255,255,255,0.08);
-    flex-shrink: 0;
-  }
-
-  .msg-bubble.actions-open .msg-actions span:active {
-    background: rgba(255,255,255,0.2);
-  }
-
-  /* Video call modal stacks vertically */
-  .call-area { flex-direction: column; }
-  .video-box { height: 110px; }
-
-  /* Participants list taller on mobile */
-  .participants-list { max-height: 200px; }
-
-  /* Edit hint hidden on mobile */
-  .msg-edit-actions span { display: none; }
-
-  /* Topbar: hide channel desc always */
-  .channel-desc { display: none !important; }
-}
 /* ── NEW LINE BUTTON (mobile only) ── */
 .newline-btn {
-  display: none; /* hidden on desktop */
+  display: none;
   background: none;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1582,19 +1542,6 @@ body {
   height: auto;
   margin: 0;
   flex-shrink: 0;
-}
-
-@media (max-width: 640px) {
-  .newline-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  /* Update placeholder text on mobile */
-  #msgInput::placeholder {
-    font-size: 13px;
-  }
 }
 
 /* ── UNDO DELETE TOAST ── */
@@ -1640,14 +1587,28 @@ body {
 
 .undo-btn:hover { background: var(--teams-accent); }
 
+/* ── MEMBER MENU BUTTON ── */
+.member-item {
+  position: relative;
+}
+
+.member-menu-btn {
+  opacity: 0;
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  letter-spacing: 1px;
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.member-item:hover .member-menu-btn { opacity: 1; }
+.member-menu-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-light); }
+
+/* Always visible on mobile */
 @media (max-width: 640px) {
-  .undo-toast {
-    left: 12px;
-    right: 12px;
-    transform: translateX(0) translateY(20px);
-    bottom: calc(70px + env(safe-area-inset-bottom));
-  }
-  .undo-toast.show {
-    transform: translateX(0) translateY(0);
-  }
+  .member-menu-btn { opacity: 0.6; }
 }
