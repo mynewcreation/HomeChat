@@ -605,6 +605,9 @@ function renderMessages(msgs) {
   });
   if (wasAtBottom) area.scrollTop = area.scrollHeight;
 
+  // Mark channel as seen by current user
+  markChannelSeen(state.currentChannel, msgs);
+
   // After rendering, schedule clearing unread IDs for current channel
   // so bold shows for a moment then auto-clears when user scrolls/reads
   setTimeout(function() {
@@ -629,17 +632,17 @@ function clearUnreadMsgIdsForChannel() {
 }
 
 function appendMessageEl(area, msg) {
-  const isMine  = msg.sender === state.currentUser.name;
+  const isMine   = msg.sender === state.currentUser.name;
   const isViaSms = !!msg.viaSms;
-  const group   = document.createElement('div');
+  const group    = document.createElement('div');
   group.className = 'msg-group' + (isMine ? ' mine' : '') + (isViaSms ? ' sms-msg' : '');
   if (msg.id) group.dataset.msgId = msg.id;
 
-  // SMS messages get a phone avatar; regular users get their initial
-  const avatarInner = isViaSms
-    ? '📱'
-    : msg.sender[0].toUpperCase();
-  const avatarHtml = '<div class="msg-avatar' + (isViaSms ? ' sms-avatar' : '') + '" style="background:' + msg.color + '">' + avatarInner + '</div>';
+  // Only show avatar for OTHER users — hide own avatar
+  const avatarInner = isViaSms ? '📱' : msg.sender[0].toUpperCase();
+  const avatarHtml  = !isMine
+    ? '<div class="msg-avatar' + (isViaSms ? ' sms-avatar' : '') + '" style="background:' + msg.color + '">' + avatarInner + '</div>'
+    : '<div class="msg-avatar-spacer"></div>'; // spacer keeps alignment
 
   // Quote block
   let quoteHtml = '';
@@ -708,8 +711,22 @@ function appendMessageEl(area, msg) {
     }
   }
 
+  // Seen indicator — show tiny avatars of users who have seen this message
+  // Only shown on own messages, and only on the last message
+  var seenHtml = '';
+  if (isMine && msg.id && msg.seenBy) {
+    var seenUsers = Object.keys(msg.seenBy).filter(function(u) { return u !== state.currentUser.name; });
+    if (seenUsers.length > 0) {
+      var seenAvatars = seenUsers.map(function(u) {
+        var color = getUserColor(u);
+        return '<span class="seen-avatar" style="background:' + color + '" title="Seen by ' + escapeHtml(u) + '">' + u[0].toUpperCase() + '</span>';
+      }).join('');
+      seenHtml = '<div class="seen-row">' + seenAvatars + '</div>';
+    }
+  }
+
   group.innerHTML =
-    (isMine ? '' : avatarHtml) +
+    avatarHtml +
     '<div class="msg-content">' +
       '<div class="msg-meta">' +
         (isMine ? '' : senderHtml) +
@@ -729,8 +746,8 @@ function appendMessageEl(area, msg) {
         '</div>' +
       '</div>' +
       '<div class="reactions">' + reactions + '</div>' +
-    '</div>' +
-    (isMine ? avatarHtml : '');
+      seenHtml +
+    '</div>';
 
   area.appendChild(group);
 
@@ -1471,6 +1488,39 @@ function toggleCam(btn) {
 function formatTime(d) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+}
+
+// Get a user's color from cache (for seen avatars)
+function getUserColor(name) {
+  var users = OfflineStore.getCachedUsers();
+  var u = users.find(function(u) { return u.name === name; });
+  return u ? u.color : '#6264a7';
+}
+
+// Mark this channel as seen by current user — writes to the last message's seenBy field
+function markChannelSeen(channelId, msgs) {
+  if (!isOnline() || !msgs || msgs.length === 0) return;
+  // Find the last message NOT sent by current user (or any message)
+  var lastMsg = null;
+  for (var i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].id && !msgs[i].id.startsWith('offline-')) {
+      lastMsg = msgs[i];
+      break;
+    }
+  }
+  if (!lastMsg || !lastMsg.id) return;
+  // Only mark seen on messages from others
+  if (lastMsg.sender === state.currentUser.name) return;
+
+  var seenBy = lastMsg.seenBy || {};
+  if (seenBy[state.currentUser.name]) return; // already marked
+
+  var update = {};
+  update['seenBy.' + state.currentUser.name] = firebase.firestore.FieldValue.serverTimestamp();
+  db.collection('channels').doc(channelId)
+    .collection('messages').doc(lastMsg.id)
+    .update(update)
+    .catch(function() {});
 }
 
 function updateTabTitle() {
