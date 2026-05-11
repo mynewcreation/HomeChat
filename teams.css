@@ -114,6 +114,22 @@ body {
 .channel-item:hover { background: var(--sidebar-hover); color: #fff; }
 .channel-item.active { background: var(--sidebar-active); color: #fff; }
 
+/* Sidebar label base style */
+.ch-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: inherit;
+}
+
+/* Unread — orange bold, overrides everything */
+.unread-item {
+  font-weight: 700 !important;
+  color: #f07800 !important;
+}
+
 .channel-item .badge {
   margin-left: auto;
   background: #e74c3c;

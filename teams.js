@@ -327,8 +327,7 @@ function renderChannels(filter) {
       // Channel label — bold + orange when unread, normal when read
       const labelSpan = document.createElement('span');
       labelSpan.textContent = c.label;
-      labelSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
-        (hasUnread ? 'font-weight:700;color:#f07800;' : '');
+      labelSpan.className = hasUnread ? 'ch-label unread-item' : 'ch-label';
       div.appendChild(labelSpan);
 
       if (hasUnread) {
@@ -384,8 +383,7 @@ function renderDMs(users, filter) {
     // Name — bold + orange when unread, normal when read
     const nameSpan = document.createElement('span');
     nameSpan.textContent = u.name;
-    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
-      (hasUnread ? 'font-weight:700;color:#f07800;' : '');
+    nameSpan.className = hasUnread ? 'ch-label unread-item' : 'ch-label';
 
     div.appendChild(dot);
     div.appendChild(nameSpan);
