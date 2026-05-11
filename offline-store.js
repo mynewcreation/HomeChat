@@ -55,6 +55,11 @@ const OfflineStore = (function () {
     save(KEYS.USERS, users);
   }
 
+  function removeCachedUser(userId) {
+    const users = getCachedUsers().filter(u => u.id !== userId);
+    save(KEYS.USERS, users);
+  }
+
   // ── CHANNELS ──────────────────────────────────────────────
   function cacheChannels(channels) {
     save(KEYS.CHANNELS, channels);
@@ -140,7 +145,7 @@ const OfflineStore = (function () {
 
   // ── PUBLIC API ────────────────────────────────────────────
   return {
-    cacheUsers, getCachedUsers, getCachedUser, upsertCachedUser,
+    cacheUsers, getCachedUsers, getCachedUser, upsertCachedUser, removeCachedUser,
     cacheChannels, getCachedChannels, upsertCachedChannel,
     cacheMessages, getCachedMessages, appendCachedMessage,
     addToOutbox, getOutbox, clearOutbox, removeFromOutbox,

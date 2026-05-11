@@ -153,6 +153,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (isOnline()) {
     state.unsubscribeUsers = db.collection('users').orderBy('name')
       .onSnapshot(function(snap) {
+        // Handle deletions — remove from local cache immediately
+        snap.docChanges().forEach(function(change) {
+          if (change.type === 'removed') {
+            OfflineStore.removeCachedUser(change.doc.id);
+          }
+        });
         const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
         OfflineStore.cacheUsers(users);
         renderDMs(users);
@@ -181,6 +187,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!state.unsubscribeUsers) {
         state.unsubscribeUsers = db.collection('users').orderBy('name')
           .onSnapshot(function(snap) {
+            snap.docChanges().forEach(function(change) {
+              if (change.type === 'removed') {
+                OfflineStore.removeCachedUser(change.doc.id);
+              }
+            });
             const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
             OfflineStore.cacheUsers(users);
             renderDMs(users);

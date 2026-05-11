@@ -172,11 +172,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } else {
         // Cache all existing users for offline login
-        snap.docs.forEach(d => {
-          const u = d.data();
-          OfflineStore.upsertCachedUser({ id: d.id, ...u });
-        });
-        // Also fetch all users to cache them
         db.collection('users').get().then(all => {
           all.docs.forEach(d => OfflineStore.upsertCachedUser({ id: d.id, ...d.data() }));
         });
