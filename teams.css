@@ -107,6 +107,7 @@ body {
   color: var(--text-muted);
   transition: background 0.15s;
   position: relative;
+  min-height: 32px;
 }
 
 .channel-item:hover { background: var(--sidebar-hover); color: #fff; }
@@ -268,6 +269,27 @@ body {
 
 .msg-group.mine .msg-meta { flex-direction: row-reverse; }
 
+/* Sender name — bold and bright */
+.msg-meta strong {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.1px;
+}
+
+/* Unread sender name — orange + bold, clickable */
+.msg-meta strong.sender-unread {
+  color: #f07800;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 1px dotted #f07800;
+  transition: color 0.2s;
+}
+
+.msg-meta strong.sender-unread:hover {
+  color: #ffaa44;
+}
+
 /* ── QUOTE BLOCK ── */
 .msg-quote {
   background: rgba(98,100,167,0.2);
@@ -341,6 +363,7 @@ body {
   gap: 2px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
   z-index: 10;
+  white-space: normal; /* override pre-wrap from parent bubble */
 }
 
 .msg-actions span {
@@ -348,6 +371,7 @@ body {
   font-size: 13px;
   padding: 2px 4px;
   border-radius: 4px;
+  white-space: normal;
 }
 
 .msg-actions span:hover { background: rgba(255,255,255,0.15); }
@@ -1084,37 +1108,6 @@ body {
   transform: translateY(0);
 }
 
-/* ── NOTIFICATION TOAST ── */
-.notif-toast {
-  position: fixed;
-  top: 18px;
-  right: 18px;
-  background: #1e1f3b;
-  color: #fff;
-  padding: 10px 16px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  max-width: 300px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  border-left: 4px solid var(--teams-purple);
-  z-index: 99999;
-  opacity: 0;
-  transform: translateY(-16px);
-  transition: opacity 0.3s, transform 0.3s;
-  pointer-events: none;
-  cursor: pointer;
-}
-
-.notif-toast.show {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-.notif-toast-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; color: var(--teams-accent); }
-.notif-toast-body  { font-size: 11px; color: var(--text-muted); }
-
 /* ── SYNC TOAST ── */
 .sync-toast {
   position: fixed;
@@ -1399,8 +1392,7 @@ body {
   }
 
   /* ── Toasts: full-width bottom ── */
-  .sms-toast,
-  .notif-toast {
+  .sms-toast {
     left: 10px;
     right: 10px;
     max-width: unset;
@@ -1409,14 +1401,7 @@ body {
     transform: translateY(20px);
   }
 
-  .notif-toast {
-    top: 10px;
-    bottom: auto;
-    transform: translateY(-16px);
-  }
-
-  .notif-toast.show { transform: translateY(0); }
-  .sms-toast.show   { transform: translateY(0); }
+  .sms-toast.show { transform: translateY(0); }
 
   /* ── Conversation search bar ── */
   .conv-search-bar {
@@ -1443,5 +1428,141 @@ body {
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .input-bar {
     padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── MODAL SIZE VARIANTS ── */
+.modal-box-call    { width: min(480px, calc(100vw - 24px)); }
+.modal-box-channel { width: min(400px, calc(100vw - 24px)); }
+
+/* ── SETTINGS SELECT ── */
+.settings-select {
+  width: 100%;
+  padding: 10px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-light);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+.settings-select:focus { border-color: var(--teams-purple); }
+
+/* ── SMS INBOX FOOTER / SUBTITLE ── */
+.sms-inbox-subtitle {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.sms-inbox-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sms-clear-btn {
+  width: 100%;
+  padding: 8px;
+  background: rgba(196,49,75,0.15);
+  color: #ff6b6b;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.sms-clear-btn:hover { background: rgba(196,49,75,0.3); }
+
+/* ── SEND BUTTON LABEL ── */
+@media (max-width: 380px) {
+  .send-label { display: none; }
+}
+
+/* ── MOBILE: message actions hidden, shown on tap ── */
+@media (max-width: 640px) {
+  /* Keep actions hidden by default */
+  .msg-bubble .msg-actions {
+    display: none;
+  }
+
+  /* Show when bubble has .actions-open — render BELOW the bubble, inline */
+  .msg-bubble.actions-open .msg-actions {
+    display: flex;
+    position: static;          /* no floating — sits in normal flow below text */
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 6px 0 2px 0;
+    gap: 2px;
+    flex-wrap: wrap;           /* wrap if too many icons */
+    justify-content: flex-start;
+    top: unset;
+    right: unset;
+    left: unset;
+    border-radius: 0;
+    max-width: 100%;           /* never wider than the bubble */
+    overflow: hidden;
+  }
+
+  /* Own messages — align actions to the right */
+  .msg-group.mine .msg-bubble.actions-open .msg-actions {
+    justify-content: flex-end;
+  }
+
+  /* Smaller, compact icons */
+  .msg-bubble.actions-open .msg-actions span {
+    font-size: 14px;
+    padding: 4px 5px;
+    border-radius: 6px;
+    min-width: 28px;
+    text-align: center;
+    background: rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+
+  .msg-bubble.actions-open .msg-actions span:active {
+    background: rgba(255,255,255,0.2);
+  }
+
+  /* Video call modal stacks vertically */
+  .call-area { flex-direction: column; }
+  .video-box { height: 110px; }
+
+  /* Participants list taller on mobile */
+  .participants-list { max-height: 200px; }
+
+  /* Edit hint hidden on mobile */
+  .msg-edit-actions span { display: none; }
+
+  /* Topbar: hide channel desc always */
+  .channel-desc { display: none !important; }
+}
+/* ── NEW LINE BUTTON (mobile only) ── */
+.newline-btn {
+  display: none; /* hidden on desktop */
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  height: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .newline-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Update placeholder text on mobile */
+  #msgInput::placeholder {
+    font-size: 13px;
   }
 }

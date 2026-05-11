@@ -1,0 +1,21 @@
+{
+  "name": "Palawan Connect",
+  "short_name": "PConnect",
+  "description": "Palawan Connect Team Chat",
+  "start_url": "/teams.html",
+  "display": "standalone",
+  "background_color": "#0d0d1a",
+  "theme_color": "#6264a7",
+  "icons": [
+    {
+      "src": "M-LOGO.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "M-LOGO.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

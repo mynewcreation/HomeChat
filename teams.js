@@ -62,8 +62,12 @@ async function fetchSmsFromBridge() {
       } else {
         // Unread badge
         state.unread[channelId] = (state.unread[channelId] || 0) + 1;
+        if (!state.unreadSenders[channelId]) state.unreadSenders[channelId] = new Set();
+        state.unreadSenders[channelId].add(msg.sender);
         renderChannels();
+        renderDMsFromCache();
         updateTabTitle();
+        updateFavicon(true);
         showSmsToast(entry.from, entry.text);
       }
     });
@@ -97,12 +101,17 @@ const state = {
   currentChannel: 'general',
   currentUser: {},
   unread: {},
+  unreadSenders: {},        // { channelId: Set of sender names with unread msgs }
+  unreadMsgIds: new Set(),  // message IDs that are unread (bold sender name in bubble)
+  lastSender: {},           // { channelId: 'SenderName' } — last unread sender per channel
   msgCount: {},
+  notifCount: {},
   unsubscribeMessages: null,
   unsubscribeUsers: null,
+  unsubscribeNotifs: [],
   typingTimer: null,
   isOffline: false,
-  quoteMsg: null,          // currently quoted message
+  quoteMsg: null,
 };
 
 // BASE CHANNELS — empty, all channels are created by users
@@ -135,6 +144,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       '<div style="text-align:center;color:#aaa;margin-top:60px;font-size:14px;">No channels yet.<br>Click <strong>+ Add Channel</strong> to create one.</div>';
   }
 
+  // Start notification listeners for all channels
+  if (isOnline()) {
+    setTimeout(startNotifListeners, 1500); // slight delay so msgCount is seeded first
+  }
+
   // Users listener — graceful offline fallback
   if (isOnline()) {
     state.unsubscribeUsers = db.collection('users').orderBy('name')
@@ -143,6 +157,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         OfflineStore.cacheUsers(users);
         renderDMs(users);
         renderMembers(users);
+        // Re-start notif listeners now that DM channels are known
+        if (isOnline()) setTimeout(startNotifListeners, 800);
       });
   } else {
     const cached = OfflineStore.getCachedUsers();
@@ -288,31 +304,33 @@ function renderChannels(filter) {
   channels
     .filter(function(c) { return c.label.toLowerCase().includes(filter.toLowerCase()); })
     .forEach(function(c) {
+      const hasUnread = state.unread[c.id] > 0;
+
       const div = document.createElement('div');
       div.className = 'channel-item' + (c.id === state.currentChannel ? ' active' : '');
+      div.onclick = function() { loadChannelAndCloseSidebar(c.id); };
 
+      // Channel label — bold + orange when unread, normal when read
       const labelSpan = document.createElement('span');
       labelSpan.textContent = c.label;
-      labelSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      labelSpan.onclick = function() { loadChannelAndCloseSidebar(c.id); };
+      labelSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
+        (hasUnread ? 'font-weight:700;color:#f07800;' : '');
+      div.appendChild(labelSpan);
+
+      if (hasUnread) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = state.unread[c.id];
+        div.appendChild(badge);
+      }
 
       const menuBtn = document.createElement('span');
       menuBtn.className = 'ch-menu-btn';
       menuBtn.textContent = '...';
       menuBtn.title = 'Options';
-      menuBtn.onclick = function(e) { openChannelCtxMenu(e, c.id); };
-
-      div.appendChild(labelSpan);
-
-      const unread = state.unread[c.id] || 0;
-      if (unread) {
-        const badge = document.createElement('span');
-        badge.className = 'badge';
-        badge.textContent = unread;
-        div.appendChild(badge);
-      }
-
+      menuBtn.onclick = function(e) { e.stopPropagation(); openChannelCtxMenu(e, c.id); };
       div.appendChild(menuBtn);
+
       list.appendChild(div);
     });
 }
@@ -326,15 +344,41 @@ function renderDMs(users, filter) {
     .filter(function(u) { return u.name !== state.currentUser.name; })
     .filter(function(u) { return u.name.toLowerCase().includes(filter.toLowerCase()); })
     .forEach(function(u) {
-      const dmId = dmChannelId(state.currentUser.name, u.name);
-      const div  = document.createElement('div');
+      const dmId      = dmChannelId(state.currentUser.name, u.name);
+      const hasUnread = state.unread[dmId] > 0;
+
+      const div = document.createElement('div');
       div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
       div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
-      const dot     = '<span style="width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0"></span>';
-      const unread  = state.unread[dmId] || 0;
-      div.innerHTML = dot + '<span>' + u.name + '</span>' + (unread ? '<span class="badge">' + unread + '</span>' : '');
+
+      // Status dot
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
+
+      // Name — bold + orange when unread, normal when read
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = u.name;
+      nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
+        (hasUnread ? 'font-weight:700;color:#f07800;' : '');
+
+      div.appendChild(dot);
+      div.appendChild(nameSpan);
+
+      if (hasUnread) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = state.unread[dmId];
+        div.appendChild(badge);
+      }
+
       list.appendChild(div);
     });
+}
+
+// Helper to re-render DMs from cached users
+function renderDMsFromCache() {
+  const cached = OfflineStore.getCachedUsers();
+  renderDMs(cached);
 }
 
 function dmChannelId(a, b) {
@@ -364,13 +408,23 @@ function loadChannel(id, title, desc) {
 
   state.currentChannel = id;
   state.unread[id]     = 0;
+  state.unreadSenders[id] = new Set();
+  state.lastSender[id]    = null;  // clear last sender on open
+  // Clear unread message IDs for this channel — loading it counts as reading
+  // We'll clear them after messages render so the bold shows briefly then fades
   updateTabTitle();
+  updateFavicon(Object.values(state.unread).some(function(n){ return n > 0; }));
 
   const ch = channels.find(function(c) { return c.id === id; });
   document.getElementById('channelTitle').textContent = title || (ch ? ch.label : id);
   document.getElementById('channelDesc').textContent  = desc  || (ch ? ch.desc  || '' : '');
 
   renderChannels();
+  renderDMsFromCache();
+
+  // Restart notif listeners so the new current channel is excluded
+  // and the previous current channel gets a background listener
+  if (isOnline()) setTimeout(startNotifListeners, 500);
 
   if (!isOnline()) {
     // ── OFFLINE: render from cache + SMS inbox ──────────────
@@ -387,37 +441,49 @@ function loadChannel(id, title, desc) {
     .onSnapshot(function(snap) {
       var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       var newCount = msgs.length;
-      var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : newCount;
+      // Use -1 as sentinel: first snapshot never triggers notifications
+      var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : -1;
 
-      if (newCount > oldCount) {
-        var added    = newCount - oldCount;
-        var newMsgs  = msgs.slice(msgs.length - added);
+      if (oldCount >= 0 && newCount > oldCount) {
+        var added     = newCount - oldCount;
+        var newMsgs   = msgs.slice(msgs.length - added);
         var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; });
 
         if (fromOthers.length > 0) {
+          // Unread badge for background channels
           if (id !== state.currentChannel) {
             state.unread[id] = (state.unread[id] || 0) + fromOthers.length;
+            // Track unread senders
+            if (!state.unreadSenders[id]) state.unreadSenders[id] = new Set();
+            fromOthers.forEach(function(m) { state.unreadSenders[id].add(m.sender); });
             renderChannels();
+            renderDMsFromCache();
             updateTabTitle();
           }
-          // Browser notification for messages in any channel when window not focused
+          // Mark message IDs as unread so sender name shows bold in bubble
           fromOthers.forEach(function(m) {
-            var chLabel = (channels.find(function(c) { return c.id === id; }) || {}).label || id;
-            showBrowserNotification(
-              m.sender + ' in ' + chLabel,
-              (m.text || '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').slice(0, 80),
-              id
-            );
-            // In-app toast for background channels
-            if (id !== state.currentChannel) {
-              showNotifToast(m.sender + ' in ' + chLabel, (m.text || '').slice(0, 80));
-            }
+            if (m.id) state.unreadMsgIds.add(m.id);
+          });
+          // Record last sender for sidebar display
+          if (fromOthers.length > 0) {
+            state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
+          }
+          // Orange favicon on new unread message
+          updateFavicon(true);
+          // Notify for every new message from others regardless of which channel
+          fromOthers.forEach(function(m) {
+            var chLabel = (channels.find(function(c) { return c.id === id; }) || {}).label || ('#' + id);
+            var cleanText = (m.text || '')
+              .replace(/<br\s*\/?>/gi, ' ')
+              .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+              .slice(0, 100);
+            // Desktop browser notification (when window not focused)
+            showBrowserNotification(m.sender + ' · ' + chLabel, cleanText, id);
           });
         }
       }
 
       state.msgCount[id] = newCount;
-      // Cache for offline use
       OfflineStore.cacheMessages(id, msgs);
       renderMessages(msgs);
     });
@@ -467,6 +533,28 @@ function renderMessages(msgs) {
     appendMessageEl(area, msg);
   });
   if (wasAtBottom) area.scrollTop = area.scrollHeight;
+
+  // After rendering, schedule clearing unread IDs for current channel
+  // so bold shows for a moment then auto-clears when user scrolls/reads
+  setTimeout(function() {
+    if (document.hasFocus()) {
+      clearUnreadMsgIdsForChannel();
+    }
+  }, 3000);
+}
+
+// Clear unread msg IDs for messages currently visible in the channel
+function clearUnreadMsgIdsForChannel() {
+  var area = document.getElementById('messagesArea');
+  if (!area) return;
+  area.querySelectorAll('.sender-unread').forEach(function(el) {
+    var msgId = el.id.replace('sender-', '');
+    var senderName = el.textContent;
+    state.unreadMsgIds.delete(msgId);
+    var replacement = document.createElement('strong');
+    replacement.textContent = senderName;
+    if (el.parentNode) el.parentNode.replaceChild(replacement, el);
+  });
 }
 
 function appendMessageEl(area, msg) {
@@ -529,11 +617,22 @@ function appendMessageEl(area, msg) {
     ? '<span onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">🗑️</span>'
     : '';
 
+  // Sender name — bold+orange if this message is unread, clickable to mark read
+  var senderHtml = '';
+  if (!isMine) {
+    var isUnread = msg.id && state.unreadMsgIds.has(msg.id);
+    if (isUnread) {
+      senderHtml = '<strong class="sender-unread" id="sender-' + msg.id + '" onclick="markSenderRead(\'' + msg.id + '\',\'' + escapeHtml(msg.sender) + '\')" title="Click to mark as read">' + escapeHtml(msg.sender) + '</strong>' + smsBadge;
+    } else {
+      senderHtml = '<strong>' + escapeHtml(msg.sender) + '</strong>' + smsBadge;
+    }
+  }
+
   group.innerHTML =
     (isMine ? '' : avatarHtml) +
     '<div class="msg-content">' +
       '<div class="msg-meta">' +
-        (isMine ? '' : '<strong>' + msg.sender + '</strong>' + smsBadge) +
+        (isMine ? '' : senderHtml) +
         '<span>' + (msg.timestamp && msg.timestamp.toDate ? formatTime(msg.timestamp.toDate()) : msg.time) + '</span>' +
         editedTag +
         pendingBadge +
@@ -554,6 +653,24 @@ function appendMessageEl(area, msg) {
     (isMine ? avatarHtml : '');
 
   area.appendChild(group);
+
+  // Mobile: tap bubble to toggle action buttons
+  if ('ontouchstart' in window || window.innerWidth <= 640) {
+    const bubble = group.querySelector('.msg-bubble');
+    if (bubble) {
+      bubble.addEventListener('click', function(e) {
+        // Don't toggle if user tapped an action button or a link
+        if (e.target.closest('.msg-actions') || e.target.tagName === 'A') return;
+        const isMobile = window.innerWidth <= 640;
+        if (!isMobile) return;
+        // Close all other open bubbles first
+        document.querySelectorAll('.msg-bubble.actions-open').forEach(function(b) {
+          if (b !== bubble) b.classList.remove('actions-open');
+        });
+        bubble.classList.toggle('actions-open');
+      });
+    }
+  }
 }
 
 function makeDateDivider(label) {
@@ -610,7 +727,26 @@ async function sendMessage() {
 }
 
 function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  const isMobile = window.innerWidth <= 640 || ('ontouchstart' in window);
+  if (e.key === 'Enter') {
+    if (isMobile) {
+      // On mobile: Enter always sends (use the ↵ button for new lines)
+      e.preventDefault();
+      sendMessage();
+    } else {
+      // On desktop: Enter sends, Shift+Enter = new line
+      if (!e.shiftKey) { e.preventDefault(); sendMessage(); }
+    }
+  }
+}
+
+function insertNewline() {
+  const input = document.getElementById('msgInput');
+  const pos = input.selectionStart;
+  input.value = input.value.slice(0, pos) + '\n' + input.value.slice(pos);
+  input.selectionStart = input.selectionEnd = pos + 1;
+  autoResize(input);
+  input.focus();
 }
 
 function autoResize(el) {
@@ -978,13 +1114,74 @@ function escapeHtml(str) {
 function updateTabTitle() {
   var total = Object.values(state.unread).reduce(function(sum, n) { return sum + n; }, 0);
   document.title = total > 0 ? '(' + total + ') Palawan Connect' : 'Palawan Connect';
+  updateFavicon(total > 0);
+  updateTaskbarBadge(total);
+}
+
+// ── TASKBAR BADGE (PWA Badging API) ──────────────────────────
+function updateTaskbarBadge(count) {
+  if (!('setAppBadge' in navigator)) return;
+  if (count > 0) {
+    navigator.setAppBadge(count).catch(function() {});
+  } else {
+    navigator.clearAppBadge().catch(function() {});
+  }
+}
+
+// ── FAVICON ──────────────────────────────────────────────────
+function updateFavicon(hasUnread) {
+  var canvas = document.createElement('canvas');
+  canvas.width  = 32;
+  canvas.height = 32;
+  var ctx = canvas.getContext('2d');
+
+  // Background circle
+  ctx.beginPath();
+  ctx.arc(16, 16, 16, 0, Math.PI * 2);
+  ctx.fillStyle = hasUnread ? '#f07800' : '#6264a7';
+  ctx.fill();
+
+  // Letter P
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 18px Segoe UI, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('P', 16, 17);
+
+  // Red dot badge when unread
+  if (hasUnread) {
+    ctx.beginPath();
+    ctx.arc(26, 6, 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff3b30';
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9px Segoe UI, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('!', 26, 6);
+  }
+
+  // Apply to favicon — remove old, create new (forces browser refresh)
+  var existing = document.getElementById('favicon');
+  if (existing) existing.remove();
+  var link = document.createElement('link');
+  link.id   = 'favicon';
+  link.rel  = 'icon';
+  link.type = 'image/png';
+  link.href = canvas.toDataURL('image/png');
+  document.head.appendChild(link);
 }
 
 // Clear tab title when window regains focus
 window.addEventListener('focus', function() {
   state.unread[state.currentChannel] = 0;
+  state.unreadSenders[state.currentChannel] = new Set();
+  state.lastSender[state.currentChannel] = null;
   renderChannels();
+  renderDMsFromCache();
   updateTabTitle();
+  updateFavicon(false);
+  setTimeout(clearUnreadMsgIdsForChannel, 500);
 });
 
 // ── CONVERSATION SEARCH ──
@@ -1159,6 +1356,7 @@ function updateSmsInboxBadge() {
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateSmsInboxBadge, 500);
   checkNotificationPermission();
+  updateFavicon(false); // set initial purple favicon
 });
 
 // ── QUOTE MESSAGE ──────────────────────────────────────────
@@ -1196,6 +1394,19 @@ function quoteMessage(msgId) {
 function cancelQuote() {
   state.quoteMsg = null;
   document.getElementById('quotePreview').classList.remove('show');
+}
+
+// Mark a specific sender's message as read (removes bold)
+function markSenderRead(msgId, senderName) {
+  state.unreadMsgIds.delete(msgId);
+  // Also remove all unread msg IDs from this sender in current channel
+  // Re-render just that sender element without full re-render
+  var el = document.getElementById('sender-' + msgId);
+  if (el) {
+    var replacement = document.createElement('strong');
+    replacement.textContent = senderName;
+    el.parentNode.replaceChild(replacement, el);
+  }
 }
 
 function scrollToMsg(msgId) {
@@ -1297,6 +1508,77 @@ function cancelEdit(msgId) {
 }
 
 // ── NOTIFICATIONS ──────────────────────────────────────────
+
+// Subscribe lightweight listeners on all channels for cross-channel notifications
+function startNotifListeners() {
+  // Tear down old listeners
+  state.unsubscribeNotifs.forEach(function(unsub) { unsub(); });
+  state.unsubscribeNotifs = [];
+
+  if (!isOnline()) return;
+
+  // Build full list: group channels + DM channels from cached users
+  var allChannelIds = channels.map(function(ch) {
+    return { id: ch.id, label: ch.label || ('#' + ch.id) };
+  });
+
+  // Add DM channels for every known user
+  var cachedUsers = OfflineStore.getCachedUsers();
+  cachedUsers.forEach(function(u) {
+    if (u.name === state.currentUser.name) return;
+    var dmId = dmChannelId(state.currentUser.name, u.name);
+    allChannelIds.push({ id: dmId, label: u.name });
+  });
+
+  allChannelIds.forEach(function(ch) {
+    // Skip the current channel — its main listener already handles it
+    if (ch.id === state.currentChannel) return;
+
+    var unsub = db.collection('channels').doc(ch.id).collection('messages')
+      .orderBy('timestamp')
+      .limitToLast(1)
+      .onSnapshot(function(snap) {
+        if (snap.empty) return;
+        var doc = snap.docs[0];
+        var m   = Object.assign({ id: doc.id }, doc.data());
+
+        // Skip own messages
+        if (m.sender === state.currentUser.name) return;
+
+        // Use notifCount to detect truly new messages (not initial load)
+        var key = 'notif_' + ch.id;
+        var seenId = state.notifCount[key];
+        if (seenId === undefined) {
+          // First snapshot — just record, don't notify
+          state.notifCount[key] = m.id;
+          return;
+        }
+        if (seenId === m.id) return;
+        state.notifCount[key] = m.id;
+
+        // New message — update unread state
+        state.unread[ch.id] = (state.unread[ch.id] || 0) + 1;
+        if (!state.unreadSenders[ch.id]) state.unreadSenders[ch.id] = new Set();
+        state.unreadSenders[ch.id].add(m.sender);
+        state.lastSender[ch.id] = m.sender;
+
+        renderChannels();
+        renderDMsFromCache();
+        updateTabTitle();
+        updateFavicon(true);
+
+        var cleanText = (m.text || '')
+          .replace(/<br\s*\/?>/gi, ' ')
+          .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+          .slice(0, 100);
+
+        showBrowserNotification(m.sender + ' · ' + ch.label, cleanText, ch.id);
+      });
+
+    state.unsubscribeNotifs.push(unsub);
+  });
+}
+
 function checkNotificationPermission() {
   if (!('Notification' in window)) return;
   const btn = document.getElementById('notifBtn');
@@ -1315,45 +1597,31 @@ function requestNotificationPermission() {
   Notification.requestPermission().then(function(perm) {
     if (perm === 'granted') {
       document.getElementById('notifBtn').style.display = 'none';
-      showNotifToast('Notifications enabled', 'You will be notified of new messages.');
     }
   });
 }
 
-function showNotifToast(title, body) {
-  let toast = document.getElementById('notifToast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'notifToast';
-    toast.className = 'notif-toast';
-    document.body.appendChild(toast);
-  }
-  toast.innerHTML =
-    '<div class="notif-toast-title">' + escapeHtml(title) + '</div>' +
-    '<div class="notif-toast-body">' + escapeHtml(body) + '</div>';
-  toast.classList.add('show');
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(function() { toast.classList.remove('show'); }, 4000);
-}
-
 function showBrowserNotification(title, body, channelId) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  if (document.hasFocus()) return; // Don't notify if window is focused
-  const notif = new Notification(title, {
-    body: body,
-    icon: 'M-LOGO.png',
-    tag: channelId,
-  });
-  notif.onclick = function() {
-    window.focus();
-    loadChannel(channelId);
-    notif.close();
-  };
+  if (document.hasFocus() && channelId === state.currentChannel) return;
+  try {
+    var notif = new Notification(title, {
+      body: body,
+      icon: 'M-LOGO.png',
+      tag: channelId || 'general',
+      renotify: true,
+    });
+    notif.onclick = function() {
+      window.focus();
+      if (channelId) loadChannel(channelId);
+      notif.close();
+    };
+    // Auto-close after 6s
+    setTimeout(function() { notif.close(); }, 6000);
+  } catch(e) {
+    // ServiceWorker notifications not available — silent fail
+  }
 }
-
-// Hook into message listener to trigger notifications
-// Modify loadChannel's onSnapshot to call showBrowserNotification for new messages from others
-// We'll patch this in the existing code by wrapping the logic
 
 // CLOSE PICKERS ON OUTSIDE CLICK
 document.addEventListener('click', function(e) {
@@ -1364,5 +1632,14 @@ document.addEventListener('click', function(e) {
   const ctxMenu = document.getElementById('channelCtxMenu');
   if (ctxMenu && !ctxMenu.contains(e.target) && !e.target.classList.contains('ch-menu-btn')) {
     closeCtxMenu();
+  }
+
+  // Mobile: close message action menus when tapping outside
+  if (window.innerWidth <= 640) {
+    if (!e.target.closest('.msg-bubble')) {
+      document.querySelectorAll('.msg-bubble.actions-open').forEach(function(b) {
+        b.classList.remove('actions-open');
+      });
+    }
   }
 });

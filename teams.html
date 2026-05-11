@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Palawan Connect</title>
+<link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="teams.css">
 </head>
 <body>
@@ -100,11 +104,12 @@
     <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">📎</button>
     <input type="file" id="fileInput" style="display:none" onchange="attachFile(this)">
     <div class="input-wrapper">
-      <textarea id="msgInput" placeholder="Type a message... (Shift+Enter for new line)" rows="1"
+      <textarea id="msgInput" placeholder="Type a message..." rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this); showTyping()"></textarea>
     </div>
+    <button class="newline-btn" onclick="insertNewline()" title="New line">↵</button>
     <button class="emoji-btn" onclick="toggleEmojiPicker()" title="Emoji">😊</button>
-    <button class="send-btn" onclick="sendMessage()">Send ➤</button>
+    <button class="send-btn" onclick="sendMessage()"><span class="send-label">Send</span> ➤</button>
   </div>
 
   <!-- Emoji Picker -->
@@ -148,7 +153,7 @@
       <label>Display Name</label>
     </div>
     <div class="form-group" style="margin-bottom:16px;">
-      <select id="settingStatus" style="width:100%;padding:10px;border-radius:6px;border:1px solid #ccc;">
+      <select id="settingStatus" class="settings-select">
         <option value="online">🟢 Online</option>
         <option value="away">🟡 Away</option>
         <option value="busy">🔴 Busy</option>
@@ -165,7 +170,7 @@
 
 <!-- VIDEO CALL MODAL -->
 <div class="modal-overlay" id="callModal">
-  <div class="modal-box" style="width:480px;">
+  <div class="modal-box modal-box-call">
     <div class="call-header">
       <span id="callTitle">📹 Video Call</span>
       <span class="close-btn" onclick="closeCall()">✕</span>
@@ -191,7 +196,7 @@
 
 <!-- CHANNEL MANAGE MODAL -->
 <div class="modal-overlay" id="channelModal">
-  <div class="modal-box" style="width:400px;">
+  <div class="modal-box modal-box-channel">
     <h3 id="channelModalTitle">Add Channel</h3>
 
     <div class="form-group" style="margin-bottom:16px;">
@@ -230,12 +235,10 @@
     <span>📱 SMS Inbox</span>
     <span class="close-btn" onclick="toggleSmsInbox()">✕</span>
   </div>
-  <div style="padding:10px 14px;font-size:12px;color:#888;border-bottom:1px solid #eee;">
-    Messages received via SMS bridge
-  </div>
+  <div class="sms-inbox-subtitle">Messages received via SMS bridge</div>
   <div id="smsInboxList" style="overflow-y:auto;flex:1;"></div>
-  <div style="padding:10px 14px;border-top:1px solid #eee;">
-    <button onclick="clearSmsInboxPanel()" style="width:100%;padding:8px;background:#fde8e8;color:#c0392b;border:none;border-radius:8px;cursor:pointer;font-size:13px;">🗑️ Clear Inbox</button>
+  <div class="sms-inbox-footer">
+    <button onclick="clearSmsInboxPanel()" class="sms-clear-btn">🗑️ Clear Inbox</button>
   </div>
 </div>
 
