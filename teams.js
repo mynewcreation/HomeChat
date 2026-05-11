@@ -1,6 +1,6 @@
 // AUTH GUARD
 (function() {
-  if (!sessionStorage.getItem('teamsUser')) window.location.href = 'login.html';
+  if (!sessionStorage.getItem('teamsUser')) window.location.href = 'index.html';
 })();
 
 // ── NETWORK HELPERS ──────────────────────────────────────────
@@ -852,7 +852,7 @@ function updateStatusDisplay(status) {
 async function logout() {
   await markOffline();
   sessionStorage.removeItem('teamsUser');
-  window.location.href = 'login.html';
+  window.location.href = 'index.html';
 }
 
 async function markOffline() {
