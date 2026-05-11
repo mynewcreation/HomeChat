@@ -679,9 +679,9 @@ body {
 /* ── EMOJI PICKER — Messenger style ── */
 .emoji-picker {
   display: none;
-  position: absolute;
-  bottom: 58px;
-  right: 12px;
+  position: fixed;
+  bottom: 70px;
+  right: 16px;
   width: 320px;
   max-height: 360px;
   background: #1a1b35;
@@ -943,7 +943,7 @@ body {
 .call-btn:hover { background: rgba(255,255,255,0.2); }
 .call-btn.end-call { background: #c4314b; color: #fff; }
 .call-btn.end-call:hover { background: #a02040; }
-.call-btn.muted { background: #c4314b; color: #fff; }
+.call-btn.muted,
 .call-btn.cam-off { background: #c4314b; color: #fff; }
 
 /* ── SCROLLBAR ── */
@@ -1577,7 +1577,7 @@ body {
 
   /* ── Emoji picker ── */
   .emoji-picker {
-    bottom: 50px;
+    bottom: 60px;
     right: 5px;
     left: 5px;
     width: auto;
@@ -1794,12 +1794,6 @@ body {
 /* Always visible on mobile */
 @media (max-width: 640px) {
   .member-menu-btn { opacity: 0.6; }
-}
-
-/* ── OWN MESSAGE: hide avatar, keep spacing ── */
-.msg-avatar-spacer {
-  width: 30px;
-  flex-shrink: 0;
 }
 
 /* ── SEEN INDICATOR ── */

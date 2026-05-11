@@ -128,6 +128,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('myAvatar').style.background = state.currentUser.color;
   updateStatusDisplay(state.currentUser.status);
 
+  // Restore avatar photo if saved
+  if (state.currentUser.avatarUrl) {
+    var img = document.getElementById('myAvatarImg');
+    var ini = document.getElementById('myAvatarInitial');
+    if (img) { img.src = state.currentUser.avatarUrl; img.style.display = 'block'; }
+    if (ini) ini.style.display = 'none';
+  }
+
   // Show offline session badge if needed
   if (state.currentUser.isOfflineSession) {
     showOfflineSessionBanner();
@@ -492,6 +500,9 @@ function loadChannel(id, title, desc) {
   // and the previous current channel gets a background listener
   if (isOnline()) setTimeout(startNotifListeners, 500);
 
+  // Subscribe to typing indicators for this channel
+  subscribeTyping(id);
+
   if (!isOnline()) {
     // ── OFFLINE: render from cache + SMS inbox ──────────────
     const cached = OfflineStore.getCachedMessages(id);
@@ -594,6 +605,18 @@ function renderMessages(msgs) {
     return;
   }
 
+  // Pre-compute: for each user, find the ID of the LAST message they have seen
+  // so we only show the seen avatar on that one message, not all previous ones
+  var lastSeenMsgPerUser = {}; // { userName: msgId }
+  msgs.forEach(function(msg) {
+    if (!msg.seenBy) return;
+    Object.keys(msg.seenBy).forEach(function(user) {
+      if (user !== state.currentUser.name) {
+        lastSeenMsgPerUser[user] = msg.id; // later messages overwrite earlier ones
+      }
+    });
+  });
+
   var lastLabel = null;
   msgs.forEach(function(msg) {
     var label = msgDateLabel(msg);
@@ -601,15 +624,14 @@ function renderMessages(msgs) {
       area.appendChild(makeDateDivider(label));
       lastLabel = label;
     }
-    appendMessageEl(area, msg);
+    appendMessageEl(area, msg, lastSeenMsgPerUser);
   });
   if (wasAtBottom) area.scrollTop = area.scrollHeight;
 
   // Mark channel as seen by current user
   markChannelSeen(state.currentChannel, msgs);
 
-  // After rendering, schedule clearing unread IDs for current channel
-  // so bold shows for a moment then auto-clears when user scrolls/reads
+  // After rendering, schedule clearing unread IDs
   setTimeout(function() {
     if (document.hasFocus()) {
       clearUnreadMsgIdsForChannel();
@@ -631,18 +653,18 @@ function clearUnreadMsgIdsForChannel() {
   });
 }
 
-function appendMessageEl(area, msg) {
+function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   const isMine   = msg.sender === state.currentUser.name;
   const isViaSms = !!msg.viaSms;
   const group    = document.createElement('div');
   group.className = 'msg-group' + (isMine ? ' mine' : '') + (isViaSms ? ' sms-msg' : '');
   if (msg.id) group.dataset.msgId = msg.id;
 
-  // Only show avatar for OTHER users — hide own avatar
+  // Only show avatar for OTHER users — own messages have no avatar/spacer
   const avatarInner = isViaSms ? '📱' : msg.sender[0].toUpperCase();
   const avatarHtml  = !isMine
     ? '<div class="msg-avatar' + (isViaSms ? ' sms-avatar' : '') + '" style="background:' + msg.color + '">' + avatarInner + '</div>'
-    : '<div class="msg-avatar-spacer"></div>'; // spacer keeps alignment
+    : ''; // no spacer — bubble aligns right via flex-direction:row-reverse
 
   // Quote block
   let quoteHtml = '';
@@ -711,11 +733,13 @@ function appendMessageEl(area, msg) {
     }
   }
 
-  // Seen indicator — show tiny avatars of users who have seen this message
-  // Only shown on own messages, and only on the last message
+  // Seen indicator — only show on the LAST message seen by each user
   var seenHtml = '';
-  if (isMine && msg.id && msg.seenBy) {
-    var seenUsers = Object.keys(msg.seenBy).filter(function(u) { return u !== state.currentUser.name; });
+  if (isMine && msg.id && lastSeenMsgPerUser) {
+    // Collect users for whom THIS is their last-seen message
+    var seenUsers = Object.keys(lastSeenMsgPerUser).filter(function(u) {
+      return lastSeenMsgPerUser[u] === msg.id;
+    });
     if (seenUsers.length > 0) {
       var seenAvatars = seenUsers.map(function(u) {
         var color = getUserColor(u);
@@ -853,7 +877,7 @@ function autoResize(el) {
   el.style.height = (el.value === '' ? '' : newHeight + 'px');
 }
 
-// TYPING
+// TYPING — send + receive
 function showTyping() {
   if (!isOnline()) return;
   clearTimeout(state.typingTimer);
@@ -862,6 +886,29 @@ function showTyping() {
   state.typingTimer = setTimeout(function() {
     ref.set({ [state.currentUser.name]: false }, { merge: true });
   }, 2000);
+}
+
+var _unsubscribeTyping = null;
+
+function subscribeTyping(channelId) {
+  if (_unsubscribeTyping) { _unsubscribeTyping(); _unsubscribeTyping = null; }
+  if (!isOnline()) return;
+  _unsubscribeTyping = db.collection('typing').doc(channelId)
+    .onSnapshot(function(snap) {
+      if (!snap.exists) { document.getElementById('typingIndicator').textContent = ''; return; }
+      var data = snap.data();
+      var typers = Object.keys(data).filter(function(name) {
+        return name !== state.currentUser.name && data[name] === true;
+      });
+      var el = document.getElementById('typingIndicator');
+      if (typers.length === 0) {
+        el.textContent = '';
+      } else if (typers.length === 1) {
+        el.textContent = typers[0] + ' is typing…';
+      } else {
+        el.textContent = typers.slice(0, 2).join(', ') + ' are typing…';
+      }
+    });
 }
 
 // REACTIONS — per-user toggle (tap again to remove)
@@ -1004,21 +1051,37 @@ var _currentEmojiCat = 'recent';
 
 function toggleEmojiPicker() {
   var picker = document.getElementById('emojiPicker');
+  var btn    = document.querySelector('.emoji-btn');
   var isOpen = picker.classList.contains('show');
-  picker.classList.toggle('show');
-  if (!isOpen) {
-    // Populate on open
-    _emojiData.recent = _emojiRecent.slice(0, 32);
-    var cat = _emojiData.recent.length > 0 ? 'recent' : 'smileys';
-    // Activate correct tab
-    var tabs = document.querySelectorAll('.ep-tab');
-    tabs.forEach(function(t) { t.classList.remove('active'); });
-    tabs[_emojiData.recent.length > 0 ? 0 : 1].classList.add('active');
-    _currentEmojiCat = cat;
-    renderEmojiGrid(_emojiData[cat]);
-    document.getElementById('epSearch').value = '';
-    document.getElementById('epSearch').focus();
+
+  if (isOpen) {
+    picker.classList.remove('show');
+    return;
   }
+
+  // Position picker above the emoji button
+  if (btn) {
+    var rect = btn.getBoundingClientRect();
+    var pickerW = Math.min(320, window.innerWidth - 20);
+    var left = Math.max(8, rect.right - pickerW);
+    var bottom = window.innerHeight - rect.top + 8;
+    picker.style.left   = left + 'px';
+    picker.style.bottom = bottom + 'px';
+    picker.style.right  = 'auto';
+    picker.style.width  = pickerW + 'px';
+  }
+
+  picker.classList.add('show');
+  // Populate on open
+  _emojiData.recent = _emojiRecent.slice(0, 32);
+  var cat = _emojiData.recent.length > 0 ? 'recent' : 'smileys';
+  var tabs = document.querySelectorAll('.ep-tab');
+  tabs.forEach(function(t) { t.classList.remove('active'); });
+  tabs[_emojiData.recent.length > 0 ? 0 : 1].classList.add('active');
+  _currentEmojiCat = cat;
+  renderEmojiGrid(_emojiData[cat]);
+  document.getElementById('epSearch').value = '';
+  setTimeout(function() { document.getElementById('epSearch').focus(); }, 50);
 }
 
 function showEmojiCat(btn, cat) {
@@ -1423,39 +1486,57 @@ function updateStatusDisplay(status) {
   el.className   = 'user-status ' + status;
 }
 
-// ── AVATAR PREVIEW ──────────────────────────────────────────
+// ── AVATAR PREVIEW & UPLOAD ──────────────────────────────────
 function previewAvatar(input) {
   if (!input.files || !input.files[0]) return;
   const file   = input.files[0];
   const reader = new FileReader();
   reader.onload = function(e) {
-    // Show in settings modal preview
-    const previewImg = document.getElementById('avatarPreviewImg');
+    // Show preview immediately
+    const previewImg     = document.getElementById('avatarPreviewImg');
     const previewInitial = document.getElementById('avatarPreviewInitial');
     if (previewImg) {
       previewImg.src = e.target.result;
       previewImg.style.display = 'block';
       if (previewInitial) previewInitial.style.display = 'none';
     }
-    // Also update the sidebar avatar immediately
-    const myAvatarImg = document.getElementById('myAvatarImg');
+    const myAvatarImg     = document.getElementById('myAvatarImg');
     const myAvatarInitial = document.getElementById('myAvatarInitial');
     if (myAvatarImg) {
       myAvatarImg.src = e.target.result;
       myAvatarImg.style.display = 'block';
       if (myAvatarInitial) myAvatarInitial.style.display = 'none';
     }
-    // Save to user state and cache
-    state.currentUser.avatarUrl = e.target.result;
-    sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
-    OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
   };
   reader.readAsDataURL(file);
+
+  // Upload to Firebase Storage if online
+  if (isOnline() && state.currentUser.id) {
+    const path = 'avatars/' + state.currentUser.id + '_' + Date.now();
+    const ref  = storage.ref(path);
+    ref.put(file).then(function() {
+      return ref.getDownloadURL();
+    }).then(function(url) {
+      state.currentUser.avatarUrl = url;
+      sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
+      OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
+      // Persist to Firestore
+      db.collection('users').doc(state.currentUser.id).update({ avatarUrl: url }).catch(function() {});
+    }).catch(function(err) {
+      console.warn('Avatar upload failed:', err.message);
+    });
+  }
 }
 
 // LOGOUT
 async function logout() {
   await markOffline();
+  stopSmsPoll();
+  if (_unsubscribeTyping) { _unsubscribeTyping(); _unsubscribeTyping = null; }
+  state.unsubscribeNotifs.forEach(function(u) { u(); });
+  state.unsubscribeNotifs = [];
+  if (state.unsubscribeMessages) { state.unsubscribeMessages(); state.unsubscribeMessages = null; }
+  if (state.unsubscribeUsers) { state.unsubscribeUsers(); state.unsubscribeUsers = null; }
   sessionStorage.removeItem('teamsUser');
   window.location.href = 'index.html';
 }
@@ -2053,7 +2134,7 @@ function showBrowserNotification(title, body, channelId) {
 // CLOSE PICKERS ON OUTSIDE CLICK
 document.addEventListener('click', function(e) {
   const picker = document.getElementById('emojiPicker');
-  if (picker && !picker.contains(e.target) && !e.target.classList.contains('emoji-btn')) {
+  if (picker && !picker.contains(e.target) && !e.target.closest('.emoji-btn')) {
     picker.classList.remove('show');
   }
   const ctxMenu = document.getElementById('channelCtxMenu');
