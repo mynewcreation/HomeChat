@@ -502,14 +502,15 @@ body {
 
 .msg-image { margin-top: 5px; }
 .msg-image img {
-  max-width: 240px;
-  max-height: 180px;
-  border-radius: 6px;
+  max-width: 280px;
+  max-height: 260px;
+  border-radius: 10px;
   display: block;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, transform 0.15s;
+  object-fit: cover;
 }
-.msg-image img:hover { opacity: 0.9; }
+.msg-image img:hover { opacity: 0.92; transform: scale(1.01); }
 
 .reactions {
   display: flex;
@@ -1834,3 +1835,100 @@ body {
   text-align: right;
   font-style: italic;
 }
+
+/* ── CLICKABLE LINKS IN MESSAGES ── */
+.msg-link {
+  color: #7b9fff;
+  text-decoration: underline;
+  word-break: break-all;
+  transition: color 0.15s;
+}
+
+.msg-link:hover { color: #aac4ff; }
+
+.msg-group.mine .msg-link {
+  color: #c8d8ff;
+}
+
+.msg-group.mine .msg-link:hover { color: #fff; }
+
+/* ── FILE PREVIEW BAR (before sending) ── */
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-input);
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--teams-purple);
+  flex-shrink: 0;
+}
+
+.file-preview-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fp-img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.fp-icon { font-size: 22px; flex-shrink: 0; }
+
+.fp-name {
+  font-size: 12px;
+  color: var(--text-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.fp-size {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.file-preview-cancel {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.file-preview-cancel:hover {
+  color: #ff6b6b;
+  background: rgba(196,49,75,0.15);
+}
+
+@media (max-width: 640px) {
+  .fp-img { width: 36px; height: 36px; }
+  .file-preview-bar { padding: 5px 8px; }
+}
+
+/* ── NEW DM MODAL ROW ── */
+.new-dm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: var(--text-light);
+}
+
+.new-dm-row:hover { background: rgba(255,255,255,0.08); }

@@ -356,7 +356,7 @@ function renderChannels(filter) {
     });
 }
 
-// RENDER DMs — sorted by most recent activity (latest message first)
+// RENDER DMs — only show users with existing conversations, sorted by most recent
 function renderDMs(users, filter) {
   filter = filter || '';
   const list = document.getElementById('dmList');
@@ -364,7 +364,15 @@ function renderDMs(users, filter) {
 
   var filtered = users
     .filter(function(u) { return u.name !== state.currentUser.name; })
-    .filter(function(u) { return u.name.toLowerCase().includes((filter || '').toLowerCase()); });
+    .filter(function(u) { return u.name.toLowerCase().includes((filter || '').toLowerCase()); })
+    // Only show if there is an existing conversation (has cached messages, unread, or known activity)
+    .filter(function(u) {
+      var dmId = dmChannelId(state.currentUser.name, u.name);
+      var hasMsgs    = OfflineStore.getCachedMessages(dmId).length > 0;
+      var hasUnread  = (state.unread[dmId] || 0) > 0;
+      var hasActivity = (state.dmLastActivity[dmId] || 0) > 0;
+      return hasMsgs || hasUnread || hasActivity;
+    });
 
   // Sort: most recent activity first, then alphabetical for ties
   filtered.sort(function(a, b) {
@@ -372,7 +380,7 @@ function renderDMs(users, filter) {
     var dmB = dmChannelId(state.currentUser.name, b.name);
     var tA  = state.dmLastActivity[dmA] || 0;
     var tB  = state.dmLastActivity[dmB] || 0;
-    if (tB !== tA) return tB - tA; // most recent first
+    if (tB !== tA) return tB - tA;
     return a.name.localeCompare(b.name);
   });
 
@@ -384,11 +392,9 @@ function renderDMs(users, filter) {
     div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
     div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
 
-    // Status dot
     const dot = document.createElement('span');
     dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
 
-    // Name — bold + orange when unread, normal when read
     const nameSpan = document.createElement('span');
     nameSpan.textContent = u.name;
     nameSpan.className = hasUnread ? 'ch-label unread-item' : 'ch-label';
@@ -405,6 +411,9 @@ function renderDMs(users, filter) {
 
     list.appendChild(div);
   });
+
+  // Show "New Message" button to start a conversation with someone new
+  renderNewDmButton(users, list);
 }
 
 // Helper to re-render DMs from cached users
@@ -413,20 +422,99 @@ function renderDMsFromCache() {
   renderDMs(cached);
 }
 
+// "New Message" button — lets user start a DM with someone they haven't talked to yet
+function renderNewDmButton(allUsers, list) {
+  var btn = document.createElement('button');
+  btn.className = 'add-channel-btn';
+  btn.textContent = '+ New Message';
+  btn.style.marginTop = '6px';
+  btn.onclick = function() { openNewDmModal(allUsers); };
+  list.appendChild(btn);
+}
+
+// New DM modal — pick a user to start a conversation
+var _newDmModal = null;
+
+function openNewDmModal(users) {
+  // Remove existing modal if any
+  if (_newDmModal) _newDmModal.remove();
+
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay show';
+  overlay.id = 'newDmModal';
+  _newDmModal = overlay;
+
+  var others = (users || OfflineStore.getCachedUsers())
+    .filter(function(u) { return u.name !== state.currentUser.name; });
+
+  var rows = others.map(function(u) {
+    var dmId = dmChannelId(state.currentUser.name, u.name);
+    var hasMsgs = OfflineStore.getCachedMessages(dmId).length > 0 || (state.dmLastActivity[dmId] || 0) > 0;
+    return '<div class="new-dm-row" onclick="startDmWith(\'' + escapeHtml(u.name) + '\')">' +
+      '<div class="user-avatar" style="background:' + u.color + ';width:28px;height:28px;font-size:12px;flex-shrink:0">' + u.name[0] + '</div>' +
+      '<span style="flex:1;font-size:13px">' + escapeHtml(u.name) + '</span>' +
+      '<span style="font-size:10px;color:' + statusColor(u.status || 'offline') + '">' + (u.status || 'offline') + '</span>' +
+      (hasMsgs ? '<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">existing</span>' : '') +
+    '</div>';
+  }).join('');
+
+  overlay.innerHTML =
+    '<div class="modal-box" style="width:min(340px,calc(100vw - 24px))">' +
+      '<h3>New Message</h3>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Choose someone to message</p>' +
+      '<div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;">' +
+        rows +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn cancel" onclick="closeNewDmModal()">Cancel</button>' +
+      '</div>' +
+    '</div>';
+
+  overlay.onclick = function(e) { if (e.target === overlay) closeNewDmModal(); };
+  document.body.appendChild(overlay);
+}
+
+function closeNewDmModal() {
+  if (_newDmModal) { _newDmModal.remove(); _newDmModal = null; }
+}
+
+function startDmWith(userName) {
+  closeNewDmModal();
+  var dmId = dmChannelId(state.currentUser.name, userName);
+  // Mark activity so this user now appears in the DM list
+  state.dmLastActivity[dmId] = Date.now();
+  loadChannelAndCloseSidebar(dmId, userName, 'Direct message with ' + userName);
+  renderDMsFromCache();
+}
+
 // Seed DM activity timestamps from cached messages so sort order is correct on load
+// Also checks Firestore for any existing DM conversations not yet cached
 function seedDmActivityFromCache(users) {
   if (!users) users = OfflineStore.getCachedUsers();
   users.forEach(function(u) {
     if (u.name === state.currentUser.name) return;
     var dmId = dmChannelId(state.currentUser.name, u.name);
     if (state.dmLastActivity[dmId]) return; // already set
+
+    // Check local cache first
     var msgs = OfflineStore.getCachedMessages(dmId);
     if (msgs && msgs.length > 0) {
       var last = msgs[msgs.length - 1];
       var ts = last.timestamp && last.timestamp.toDate
         ? last.timestamp.toDate().getTime()
-        : (last.time ? new Date().getTime() : 0);
+        : Date.now();
       if (ts) state.dmLastActivity[dmId] = ts;
+    } else if (isOnline()) {
+      // Check Firestore — if this DM has any messages, mark it as having activity
+      db.collection('channels').doc(dmId).collection('messages')
+        .orderBy('timestamp', 'desc').limit(1).get()
+        .then(function(snap) {
+          if (!snap.empty) {
+            var ts = snap.docs[0].data().timestamp;
+            state.dmLastActivity[dmId] = ts && ts.toDate ? ts.toDate().getTime() : Date.now();
+            renderDMsFromCache();
+          }
+        }).catch(function() {});
     }
   });
   renderDMsFromCache();
@@ -675,7 +763,7 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
     '</div>';
   }
 
-  let content = quoteHtml + (msg.text || '');
+  let content = quoteHtml + (msg.text ? renderText(msg.text) : '');
   if (msg.fileUrl) {
     if (msg.fileType && msg.fileType.startsWith('image/')) {
       content += '<div class="msg-image"><img src="' + msg.fileUrl + '" alt="' + msg.file + '" onclick="window.open(\'' + msg.fileUrl + '\',\'_blank\')"></div>';
@@ -805,15 +893,20 @@ function makeDateDivider(label) {
 async function sendMessage() {
   const input = document.getElementById('msgInput');
   const text  = input.value.trim();
+
+  // If there's a pending file, upload it (with or without text)
+  if (_pendingFile) {
+    await uploadPendingFile();
+  }
+
   if (!text) return;
   input.value = '';
-  // Keep textarea at its current height briefly, then let it resize naturally
   autoResize(input);
 
   const msg = {
     sender:    state.currentUser.name,
     color:     state.currentUser.color,
-    text:      escapeHtml(text),
+    text:      text,   // store raw — renderText() handles escaping + links on display
     time:      formatTime(new Date()),
     reactions: [],
   };
@@ -1008,28 +1101,129 @@ function showUndoToast(msgId, onUndo) {
   }, 5000);
 }
 
-// FILE ATTACH
+// FILE ATTACH — preview before send
+var _pendingFile = null;
+
+function cancelFileAttach() {
+  _pendingFile = null;
+  document.getElementById('filePreviewBar').style.display = 'none';
+  document.getElementById('filePreviewInner').innerHTML = '';
+  document.getElementById('fileInput').value = '';
+}
+
 async function attachFile(input) {
   if (!input.files.length) return;
   const file = input.files[0];
-  document.getElementById('typingIndicator').textContent = 'Uploading...';
+  _pendingFile = file;
+
+  // Show preview
+  const bar   = document.getElementById('filePreviewBar');
+  const inner = document.getElementById('filePreviewInner');
+  bar.style.display = 'flex';
+
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      inner.innerHTML =
+        '<img src="' + e.target.result + '" class="fp-img" alt="' + escapeHtml(file.name) + '">' +
+        '<span class="fp-name">' + escapeHtml(file.name) + '</span>';
+    };
+    reader.readAsDataURL(file);
+  } else {
+    inner.innerHTML =
+      '<span class="fp-icon">📎</span>' +
+      '<span class="fp-name">' + escapeHtml(file.name) + '</span>' +
+      '<span class="fp-size">(' + formatFileSize(file.size) + ')</span>';
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024)       return bytes + ' B';
+  if (bytes < 1048576)    return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+async function uploadPendingFile() {
+  if (!_pendingFile) return;
+  const file = _pendingFile;
+  const isImage = file.type.startsWith('image/');
+  cancelFileAttach();
+
+  // ── Show immediately in UI using local data URL ──────────
+  const area = document.getElementById('messagesArea');
+  const tempId = 'temp-' + Date.now();
+
+  if (isImage) {
+    // Read file locally and show right away
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const tempMsg = {
+        id:        tempId,
+        sender:    state.currentUser.name,
+        color:     state.currentUser.color,
+        text:      '',
+        file:      file.name,
+        fileUrl:   e.target.result,  // local blob URL
+        fileType:  file.type,
+        time:      formatTime(new Date()),
+        timestamp: { toDate: function() { return new Date(); } },
+        reactions: [],
+        pending:   true,
+      };
+      appendMessageEl(area, tempMsg);
+      area.scrollTop = area.scrollHeight;
+    };
+    reader.readAsDataURL(file);
+  } else {
+    // Non-image: show pending chip immediately
+    const tempMsg = {
+      id:        tempId,
+      sender:    state.currentUser.name,
+      color:     state.currentUser.color,
+      text:      '',
+      file:      file.name,
+      fileUrl:   null,
+      fileType:  file.type,
+      time:      formatTime(new Date()),
+      timestamp: { toDate: function() { return new Date(); } },
+      reactions: [],
+      pending:   true,
+    };
+    appendMessageEl(area, tempMsg);
+    area.scrollTop = area.scrollHeight;
+  }
+
+  // ── Upload to Firebase Storage in background ─────────────
+  document.getElementById('typingIndicator').textContent = 'Uploading…';
   try {
     const path = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
     const ref  = storage.ref(path);
     await ref.put(file);
     const url  = await ref.getDownloadURL();
+
+    // Remove the temp message from UI
+    var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
+    if (tempEl) tempEl.remove();
+
+    // Write real message to Firestore — onSnapshot will render it
     await db.collection('channels').doc(state.currentChannel).collection('messages').add({
-      sender: state.currentUser.name, color: state.currentUser.color,
-      text: '', file: file.name, fileUrl: url, fileType: file.type,
-      time: formatTime(new Date()),
+      sender:    state.currentUser.name,
+      color:     state.currentUser.color,
+      text:      '',
+      file:      file.name,
+      fileUrl:   url,
+      fileType:  file.type,
+      time:      formatTime(new Date()),
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       reactions: [],
     });
   } catch (err) {
+    // Remove temp and show error
+    var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
+    if (tempEl) tempEl.remove();
     alert('Upload failed: ' + err.message);
   } finally {
     document.getElementById('typingIndicator').textContent = '';
-    input.value = '';
   }
 }
 
@@ -1567,8 +1761,29 @@ function toggleCam(btn) {
 
 // UTILS
 function formatTime(d) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Convert URLs in already-escaped text to clickable links
+function linkify(escapedText) {
+  // Match http/https URLs (already HTML-escaped so & is &amp; etc.)
+  var urlPattern = /(https?:\/\/[^\s<>"']+)/g;
+  return escapedText.replace(urlPattern, function(url) {
+    // Decode &amp; back for the href attribute
+    var href = url.replace(/&amp;/g, '&');
+    return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" class="msg-link">' + url + '</a>';
+  });
+}
+
+// Escape HTML then convert newlines and linkify
+function renderText(str) {
+  var escaped = escapeHtml(str);
+  // Convert newlines to <br>
+  escaped = escaped.replace(/\n/g, '<br>');
+  // Make URLs clickable
+  return linkify(escaped);
 }
 
 // Get a user's color from cache (for seen avatars)
@@ -1999,7 +2214,7 @@ async function saveEdit(msgId) {
   }
 
   await db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId).update({
-    text: escapeHtml(newText),
+    text: newText,   // store raw
     edited: true,
   });
   // Firestore listener will re-render and remove the edit row
