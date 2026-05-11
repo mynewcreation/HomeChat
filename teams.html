@@ -101,25 +101,50 @@
 
   <!-- Input Bar -->
   <div class="input-bar">
-    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">📎</button>
+    <!-- Attach -->
+    <button class="ib-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+    </button>
     <input type="file" id="fileInput" style="display:none" onchange="attachFile(this)">
+
+    <!-- Text input -->
     <div class="input-wrapper">
-      <textarea id="msgInput" placeholder="Type a message..." rows="1"
+      <textarea id="msgInput" placeholder="Aa" rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this); showTyping()"></textarea>
     </div>
-    <button class="newline-btn" onclick="insertNewline()" title="New line">↵</button>
-    <button class="emoji-btn" onclick="toggleEmojiPicker()" title="Emoji">😊</button>
-    <button class="send-btn" onclick="sendMessage()"><span class="send-label">Send</span> ➤</button>
+
+    <!-- New line (mobile only) -->
+    <button class="ib-btn newline-btn" onclick="insertNewline()" title="New line">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 01-4 4H4"/></svg>
+    </button>
+
+    <!-- Emoji -->
+    <button class="ib-btn emoji-btn" onclick="toggleEmojiPicker()" title="Emoji">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+    </button>
+
+    <!-- Send -->
+    <button class="send-btn" onclick="sendMessage()" title="Send">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    </button>
   </div>
 
-  <!-- Emoji Picker -->
+  <!-- Emoji Picker — Messenger style -->
   <div class="emoji-picker" id="emojiPicker">
-    <span onclick="insertEmoji('😀')">😀</span><span onclick="insertEmoji('😂')">😂</span>
-    <span onclick="insertEmoji('👍')">👍</span><span onclick="insertEmoji('❤️')">❤️</span>
-    <span onclick="insertEmoji('🎉')">🎉</span><span onclick="insertEmoji('🔥')">🔥</span>
-    <span onclick="insertEmoji('✅')">✅</span><span onclick="insertEmoji('⚠️')">⚠️</span>
-    <span onclick="insertEmoji('📊')">📊</span><span onclick="insertEmoji('💰')">💰</span>
-    <span onclick="insertEmoji('🏦')">🏦</span><span onclick="insertEmoji('📋')">📋</span>
+    <div class="ep-search-row">
+      <input class="ep-search" id="epSearch" type="text" placeholder="Search emoji..." oninput="filterEmoji(this.value)" autocomplete="off">
+    </div>
+    <div class="ep-tabs">
+      <button class="ep-tab active" onclick="showEmojiCat(this,'recent')" title="Recent">🕐</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'smileys')" title="Smileys">😀</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'gestures')" title="Gestures">👋</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'hearts')" title="Hearts">❤️</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'nature')" title="Nature">🌿</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'food')" title="Food">🍕</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'activity')" title="Activity">⚽</button>
+      <button class="ep-tab" onclick="showEmojiCat(this,'symbols')" title="Symbols">💯</button>
+    </div>
+    <div class="ep-grid" id="epGrid"></div>
   </div>
 </div>
 

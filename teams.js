@@ -663,8 +663,10 @@ function appendMessageEl(area, msg) {
 
   const editedTag = msg.edited ? '<span class="msg-edited-tag">(edited)</span>' : '';
 
-  const reactions = (msg.reactions || []).map(function(r) {
-    return '<span class="reaction-chip" onclick="addReaction(\'' + msg.id + '\',\'' + r.emoji + '\')">' + r.emoji + ' ' + r.count + '</span>';
+  const me = state.currentUser.name;
+  const reactions = (msg.reactions || []).filter(function(r) { return r.count > 0; }).map(function(r) {
+    var reacted = r.users && r.users.includes(me);
+    return '<span class="reaction-chip' + (reacted ? ' reacted' : '') + '" onclick="addReaction(\'' + msg.id + '\',\'' + r.emoji + '\')" title="' + (reacted ? 'Remove reaction' : 'Add reaction') + '">' + r.emoji + ' ' + r.count + '</span>';
   }).join('');
 
   // SMS badge shown next to sender name
@@ -677,15 +679,22 @@ function appendMessageEl(area, msg) {
     ? '<span class="pending-badge">⏳ Pending</span>'
     : '';
 
-  // Actions: quote always available; edit/delete only for own messages
-  const quoteAction = msg.id && !msg.pending
-    ? '<span onclick="quoteMessage(\'' + msg.id + '\')" title="Quote">↩️</span>'
+  // Actions: SVG icons — elegant like Messenger
+  var svgReply  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>';
+  var svgLike   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>';
+  var svgHeart  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>';
+  var svgLaugh  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>';
+  var svgEdit   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+  var svgDelete = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
+
+  const quoteAction  = msg.id && !msg.pending
+    ? '<span class="ma-btn" onclick="quoteMessage(\'' + msg.id + '\')" title="Reply">' + svgReply + '</span>'
     : '';
-  const editAction = isMine && msg.id && !msg.pending
-    ? '<span onclick="startEdit(\'' + msg.id + '\')" title="Edit">✏️</span>'
+  const editAction   = isMine && msg.id && !msg.pending
+    ? '<span class="ma-btn" onclick="startEdit(\'' + msg.id + '\')" title="Edit">' + svgEdit + '</span>'
     : '';
   const deleteAction = isMine && msg.id
-    ? '<span onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">🗑️</span>'
+    ? '<span class="ma-btn ma-btn-danger" onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">' + svgDelete + '</span>'
     : '';
 
   // Sender name — bold+orange if this message is unread, clickable to mark read
@@ -712,9 +721,9 @@ function appendMessageEl(area, msg) {
         content +
         '<div class="msg-actions">' +
           quoteAction +
-          '<span onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">👍</span>' +
-          '<span onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">❤️</span>' +
-          '<span onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">😂</span>' +
+          '<span class="ma-btn ma-btn-like" onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">' + svgLike + '</span>' +
+          '<span class="ma-btn ma-btn-heart" onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">' + svgHeart + '</span>' +
+          '<span class="ma-btn ma-btn-laugh" onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">' + svgLaugh + '</span>' +
           editAction +
           deleteAction +
         '</div>' +
@@ -838,16 +847,39 @@ function showTyping() {
   }, 2000);
 }
 
-// REACTIONS
+// REACTIONS — per-user toggle (tap again to remove)
 async function reactTo(msgId, emoji) {
+  if (!isOnline()) return;
   const ref  = db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId);
   const snap = await ref.get();
   if (!snap.exists) return;
+
+  const me        = state.currentUser.name;
   const reactions = snap.data().reactions || [];
   const existing  = reactions.find(function(r) { return r.emoji === emoji; });
-  if (existing) existing.count++;
-  else reactions.push({ emoji: emoji, count: 1 });
-  await ref.update({ reactions: reactions });
+
+  if (existing) {
+    // Migrate old format (no users array) to new format
+    if (!existing.users) existing.users = [];
+
+    if (existing.users.includes(me)) {
+      // Already reacted — toggle OFF
+      existing.users = existing.users.filter(function(u) { return u !== me; });
+      existing.count = existing.users.length;
+    } else {
+      // New reactor — toggle ON
+      existing.users.push(me);
+      existing.count = existing.users.length;
+    }
+
+    // Remove the reaction entirely if count hits 0
+    const updated = reactions.filter(function(r) { return r.count > 0; });
+    await ref.update({ reactions: updated });
+  } else {
+    // First time this emoji is used on this message
+    reactions.push({ emoji: emoji, count: 1, users: [me] });
+    await ref.update({ reactions: reactions });
+  }
 }
 
 function addReaction(msgId, emoji) { reactTo(msgId, emoji); }
@@ -937,12 +969,95 @@ async function attachFile(input) {
   }
 }
 
-// EMOJI
-function toggleEmojiPicker() { document.getElementById('emojiPicker').classList.toggle('show'); }
+// ── EMOJI PICKER ─────────────────────────────────────────────
+var _emojiRecent = JSON.parse(localStorage.getItem('mhc_recent_emoji') || '[]');
+
+var _emojiData = {
+  recent:   [], // filled dynamically
+  smileys:  ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','🥰','😘','😗','😙','😚','🙂','🤗','🤩','🤔','🤨','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','🥱','😴','😌','😛','😜','😝','🤤','😒','😓','😔','😕','🙃','🤑','😲','☹️','🙁','😖','😞','😟','😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','🥵','🥶','😳','🤪','😵','🥴','😠','😡','🤬','😷','🤒','🤕','🤢','🤮','🤧','🥳','🥺','🤠','🤡','🤥','🤫','🤭','🧐','🤓'],
+  gestures: ['👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🫀','🫁','🧠','🦷','🦴','👀','👁️','👅','👄'],
+  hearts:   ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉️','☸️','✡️','🔯','🕎','☯️','☦️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','🆔','⚛️','🉑','☢️','☣️','📴','📳','🈶','🈚','🈸','🈺','🈷️','✴️','🆚','💮','🉐','㊙️','㊗️','🈴','🈵','🈹','🈲','🅰️','🅱️','🆎','🆑','🅾️','🆘'],
+  nature:   ['🌱','🌿','🍀','🌾','🌵','🌲','🌳','🌴','🌸','🌺','🌻','🌹','🥀','🌷','🌼','💐','🍄','🌰','🦔','🐾','🌍','🌎','🌏','🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘','🌙','🌚','🌛','🌜','🌝','🌞','⭐','🌟','💫','✨','⚡','🌈','☀️','🌤️','⛅','🌥️','☁️','🌦️','🌧️','⛈️','🌩️','🌨️','❄️','☃️','⛄','🌬️','💨','🌀','🌊','🌫️','🌁'],
+  food:     ['🍎','🍊','🍋','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🫑','🧄','🧅','🥔','🍠','🥐','🥯','🍞','🥖','🥨','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🫔','🥗','🥘','🫕','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥮','🍢','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🧃','🥤','🧋','☕','🍵','🫖','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾'],
+  activity: ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','⛹️','🤺','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎫','🎟️','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎲','♟️','🎯','🎳','🎮','🎰','🧩'],
+  symbols:  ['💯','🔔','🔕','🎵','🎶','💤','🔇','🔈','🔉','🔊','📢','📣','📯','🔔','🔕','🎼','💹','📈','📉','📊','✅','❌','❎','🔱','📛','🔰','⭕','✳️','❇️','💠','🆗','🆙','🆒','🆕','🆓','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔠','🔡','🔢','🔣','🔤','🅰️','🅱️','🆎','🆑','🅾️','🆘','⛔','🚫','🚳','🚭','🚯','🚱','🚷','📵','🔞','☢️','☣️','⬆️','↗️','➡️','↘️','⬇️','↙️','⬅️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🛐','⚛️','🕉️','✡️','☸️','☯️','✝️','☦️','☪️','☮️','🕎','🔯'],
+};
+
+var _currentEmojiCat = 'recent';
+
+function toggleEmojiPicker() {
+  var picker = document.getElementById('emojiPicker');
+  var isOpen = picker.classList.contains('show');
+  picker.classList.toggle('show');
+  if (!isOpen) {
+    // Populate on open
+    _emojiData.recent = _emojiRecent.slice(0, 32);
+    var cat = _emojiData.recent.length > 0 ? 'recent' : 'smileys';
+    // Activate correct tab
+    var tabs = document.querySelectorAll('.ep-tab');
+    tabs.forEach(function(t) { t.classList.remove('active'); });
+    tabs[_emojiData.recent.length > 0 ? 0 : 1].classList.add('active');
+    _currentEmojiCat = cat;
+    renderEmojiGrid(_emojiData[cat]);
+    document.getElementById('epSearch').value = '';
+    document.getElementById('epSearch').focus();
+  }
+}
+
+function showEmojiCat(btn, cat) {
+  document.querySelectorAll('.ep-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+  _currentEmojiCat = cat;
+  document.getElementById('epSearch').value = '';
+  _emojiData.recent = _emojiRecent.slice(0, 32);
+  renderEmojiGrid(_emojiData[cat]);
+}
+
+function renderEmojiGrid(list) {
+  var grid = document.getElementById('epGrid');
+  grid.innerHTML = '';
+  if (!list || list.length === 0) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:20px;font-size:12px;">No emoji found</div>';
+    return;
+  }
+  list.forEach(function(em) {
+    var span = document.createElement('span');
+    span.className = 'ep-emoji';
+    span.textContent = em;
+    span.title = em;
+    span.onclick = function() { insertEmoji(em); };
+    grid.appendChild(span);
+  });
+}
+
+function filterEmoji(query) {
+  if (!query.trim()) {
+    _emojiData.recent = _emojiRecent.slice(0, 32);
+    renderEmojiGrid(_emojiData[_currentEmojiCat]);
+    return;
+  }
+  // Search across all categories
+  var all = [];
+  Object.keys(_emojiData).forEach(function(cat) {
+    if (cat !== 'recent') all = all.concat(_emojiData[cat]);
+  });
+  // Simple filter: show emojis that match the query by unicode name lookup
+  // Since we can't do name lookup easily, show all and let user scroll
+  renderEmojiGrid(all.slice(0, 64));
+}
+
 function insertEmoji(emoji) {
-  const input = document.getElementById('msgInput');
-  input.value += emoji;
+  var input = document.getElementById('msgInput');
+  var pos   = input.selectionStart || input.value.length;
+  input.value = input.value.slice(0, pos) + emoji + input.value.slice(pos);
+  input.selectionStart = input.selectionEnd = pos + emoji.length;
+  autoResize(input);
   input.focus();
+  // Track recent
+  _emojiRecent = _emojiRecent.filter(function(e) { return e !== emoji; });
+  _emojiRecent.unshift(emoji);
+  if (_emojiRecent.length > 32) _emojiRecent.length = 32;
+  localStorage.setItem('mhc_recent_emoji', JSON.stringify(_emojiRecent));
   document.getElementById('emojiPicker').classList.remove('show');
 }
 
@@ -1289,6 +1404,36 @@ function updateStatusDisplay(status) {
   const labels = { online: '● Online', away: '● Away', busy: '● Busy', offline: '● Offline' };
   el.textContent = labels[status] || '● Online';
   el.className   = 'user-status ' + status;
+}
+
+// ── AVATAR PREVIEW ──────────────────────────────────────────
+function previewAvatar(input) {
+  if (!input.files || !input.files[0]) return;
+  const file   = input.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    // Show in settings modal preview
+    const previewImg = document.getElementById('avatarPreviewImg');
+    const previewInitial = document.getElementById('avatarPreviewInitial');
+    if (previewImg) {
+      previewImg.src = e.target.result;
+      previewImg.style.display = 'block';
+      if (previewInitial) previewInitial.style.display = 'none';
+    }
+    // Also update the sidebar avatar immediately
+    const myAvatarImg = document.getElementById('myAvatarImg');
+    const myAvatarInitial = document.getElementById('myAvatarInitial');
+    if (myAvatarImg) {
+      myAvatarImg.src = e.target.result;
+      myAvatarImg.style.display = 'block';
+      if (myAvatarInitial) myAvatarInitial.style.display = 'none';
+    }
+    // Save to user state and cache
+    state.currentUser.avatarUrl = e.target.result;
+    sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
+    OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
+  };
+  reader.readAsDataURL(file);
 }
 
 // LOGOUT
