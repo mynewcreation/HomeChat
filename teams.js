@@ -102,6 +102,7 @@ const state = {
   unsubscribeUsers: null,
   typingTimer: null,
   isOffline: false,
+  quoteMsg: null,          // currently quoted message
 };
 
 // BASE CHANNELS — empty, all channels are created by users
@@ -293,7 +294,7 @@ function renderChannels(filter) {
       const labelSpan = document.createElement('span');
       labelSpan.textContent = c.label;
       labelSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      labelSpan.onclick = function() { loadChannel(c.id); };
+      labelSpan.onclick = function() { loadChannelAndCloseSidebar(c.id); };
 
       const menuBtn = document.createElement('span');
       menuBtn.className = 'ch-menu-btn';
@@ -328,7 +329,7 @@ function renderDMs(users, filter) {
       const dmId = dmChannelId(state.currentUser.name, u.name);
       const div  = document.createElement('div');
       div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
-      div.onclick   = function() { loadChannel(dmId, u.name, 'Direct message with ' + u.name); };
+      div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
       const dot     = '<span style="width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0"></span>';
       const unread  = state.unread[dmId] || 0;
       div.innerHTML = dot + '<span>' + u.name + '</span>' + (unread ? '<span class="badge">' + unread + '</span>' : '');
@@ -388,14 +389,30 @@ function loadChannel(id, title, desc) {
       var newCount = msgs.length;
       var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : newCount;
 
-      if (id !== state.currentChannel && newCount > oldCount) {
+      if (newCount > oldCount) {
         var added    = newCount - oldCount;
         var newMsgs  = msgs.slice(msgs.length - added);
-        var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; }).length;
-        if (fromOthers > 0) {
-          state.unread[id] = (state.unread[id] || 0) + fromOthers;
-          renderChannels();
-          updateTabTitle();
+        var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; });
+
+        if (fromOthers.length > 0) {
+          if (id !== state.currentChannel) {
+            state.unread[id] = (state.unread[id] || 0) + fromOthers.length;
+            renderChannels();
+            updateTabTitle();
+          }
+          // Browser notification for messages in any channel when window not focused
+          fromOthers.forEach(function(m) {
+            var chLabel = (channels.find(function(c) { return c.id === id; }) || {}).label || id;
+            showBrowserNotification(
+              m.sender + ' in ' + chLabel,
+              (m.text || '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').slice(0, 80),
+              id
+            );
+            // In-app toast for background channels
+            if (id !== state.currentChannel) {
+              showNotifToast(m.sender + ' in ' + chLabel, (m.text || '').slice(0, 80));
+            }
+          });
         }
       }
 
@@ -457,13 +474,24 @@ function appendMessageEl(area, msg) {
   const isViaSms = !!msg.viaSms;
   const group   = document.createElement('div');
   group.className = 'msg-group' + (isMine ? ' mine' : '') + (isViaSms ? ' sms-msg' : '');
+  if (msg.id) group.dataset.msgId = msg.id;
 
   // SMS messages get a phone avatar; regular users get their initial
   const avatarInner = isViaSms
     ? '📱'
     : msg.sender[0].toUpperCase();
   const avatarHtml = '<div class="msg-avatar' + (isViaSms ? ' sms-avatar' : '') + '" style="background:' + msg.color + '">' + avatarInner + '</div>';
-  let content = msg.text || '';
+
+  // Quote block
+  let quoteHtml = '';
+  if (msg.quoteText) {
+    quoteHtml = '<div class="msg-quote" onclick="scrollToMsg(\'' + (msg.quoteId || '') + '\')">' +
+      '<strong>' + escapeHtml(msg.quoteSender || '') + '</strong>' +
+      escapeHtml((msg.quoteText || '').slice(0, 120)) +
+    '</div>';
+  }
+
+  let content = quoteHtml + (msg.text || '');
   if (msg.fileUrl) {
     if (msg.fileType && msg.fileType.startsWith('image/')) {
       content += '<div class="msg-image"><img src="' + msg.fileUrl + '" alt="' + msg.file + '" onclick="window.open(\'' + msg.fileUrl + '\',\'_blank\')"></div>';
@@ -473,6 +501,8 @@ function appendMessageEl(area, msg) {
   } else if (msg.file) {
     content += '<div class="msg-file">Attachment: ' + msg.file + '</div>';
   }
+
+  const editedTag = msg.edited ? '<span class="msg-edited-tag">(edited)</span>' : '';
 
   const reactions = (msg.reactions || []).map(function(r) {
     return '<span class="reaction-chip" onclick="addReaction(\'' + msg.id + '\',\'' + r.emoji + '\')">' + r.emoji + ' ' + r.count + '</span>';
@@ -488,21 +518,35 @@ function appendMessageEl(area, msg) {
     ? '<span class="pending-badge">⏳ Pending</span>'
     : '';
 
+  // Actions: quote always available; edit/delete only for own messages
+  const quoteAction = msg.id && !msg.pending
+    ? '<span onclick="quoteMessage(\'' + msg.id + '\')" title="Quote">↩️</span>'
+    : '';
+  const editAction = isMine && msg.id && !msg.pending
+    ? '<span onclick="startEdit(\'' + msg.id + '\')" title="Edit">✏️</span>'
+    : '';
+  const deleteAction = isMine && msg.id
+    ? '<span onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">🗑️</span>'
+    : '';
+
   group.innerHTML =
     (isMine ? '' : avatarHtml) +
     '<div class="msg-content">' +
       '<div class="msg-meta">' +
         (isMine ? '' : '<strong>' + msg.sender + '</strong>' + smsBadge) +
         '<span>' + (msg.timestamp && msg.timestamp.toDate ? formatTime(msg.timestamp.toDate()) : msg.time) + '</span>' +
+        editedTag +
         pendingBadge +
       '</div>' +
-      '<div class="msg-bubble' + (isViaSms ? ' sms-bubble' : '') + (msg.pending ? ' pending-bubble' : '') + '">' +
+      '<div class="msg-bubble' + (isViaSms ? ' sms-bubble' : '') + (msg.pending ? ' pending-bubble' : '') + '" id="bubble-' + (msg.id || '') + '">' +
         content +
         '<div class="msg-actions">' +
+          quoteAction +
           '<span onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">👍</span>' +
           '<span onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">❤️</span>' +
           '<span onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">😂</span>' +
-          (isMine ? '<span onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">🗑️</span>' : '') +
+          editAction +
+          deleteAction +
         '</div>' +
       '</div>' +
       '<div class="reactions">' + reactions + '</div>' +
@@ -525,7 +569,8 @@ async function sendMessage() {
   const text  = input.value.trim();
   if (!text) return;
   input.value = '';
-  input.style.height = 'auto';
+  // Keep textarea at its current height briefly, then let it resize naturally
+  autoResize(input);
 
   const msg = {
     sender:    state.currentUser.name,
@@ -534,6 +579,14 @@ async function sendMessage() {
     time:      formatTime(new Date()),
     reactions: [],
   };
+
+  // Attach quote if set
+  if (state.quoteMsg) {
+    msg.quoteId     = state.quoteMsg.id || '';
+    msg.quoteSender = state.quoteMsg.sender || '';
+    msg.quoteText   = (state.quoteMsg.text || '').slice(0, 200);
+    cancelQuote();
+  }
 
   if (!isOnline()) {
     // Queue for later sync
@@ -562,7 +615,9 @@ function handleKey(e) {
 
 function autoResize(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  const newHeight = Math.min(el.scrollHeight, 120);
+  // If empty, let CSS/rows=1 handle the default height naturally
+  el.style.height = (el.value === '' ? '' : newHeight + 'px');
 }
 
 // TYPING
@@ -630,7 +685,31 @@ function insertEmoji(emoji) {
 }
 
 // SIDEBAR / MEMBERS
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function toggleSidebar() {
+  const sidebar   = document.getElementById('sidebar');
+  const backdrop  = document.getElementById('sidebarBackdrop');
+  const isMobile  = window.innerWidth <= 640;
+
+  if (isMobile) {
+    const isOpen = sidebar.classList.contains('mobile-open');
+    sidebar.classList.toggle('mobile-open', !isOpen);
+    backdrop.classList.toggle('show', !isOpen);
+  } else {
+    sidebar.classList.toggle('collapsed');
+  }
+}
+
+function closeSidebarMobile() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebarBackdrop').classList.remove('show');
+}
+
+// Close sidebar when a channel is tapped on mobile
+function loadChannelAndCloseSidebar(id, title, desc) {
+  if (window.innerWidth <= 640) closeSidebarMobile();
+  loadChannel(id, title, desc);
+}
+
 function toggleMembers()  { document.getElementById('membersPanel').classList.toggle('open'); }
 
 function filterChannels(val) {
@@ -829,16 +908,27 @@ function toggleSettings() {
 function closeSettings() { document.getElementById('settingsModal').classList.remove('show'); }
 
 async function saveSettings() {
-  const status = document.getElementById('settingStatus').value;
+  const newName = document.getElementById('settingName').value.trim();
+  const status  = document.getElementById('settingStatus').value;
+  if (newName) state.currentUser.name = newName;
   state.currentUser.status = status;
   updateStatusDisplay(status);
+  document.getElementById('myName').textContent = state.currentUser.name;
+  document.getElementById('myAvatarInitial').textContent = state.currentUser.name[0].toUpperCase();
   sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
   if (state.currentUser.id && isOnline()) {
-    await db.collection('users').doc(state.currentUser.id).update({ status: status }).catch(function() {});
+    await db.collection('users').doc(state.currentUser.id).update({
+      status: status,
+      name: state.currentUser.name,
+    }).catch(function() {});
   }
   // Always update local cache
   OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
-  closeSettings();
+  document.getElementById('settingsSaveMsg').textContent = 'Saved ✓';
+  setTimeout(function() {
+    document.getElementById('settingsSaveMsg').textContent = '';
+    closeSettings();
+  }, 1000);
 }
 
 function updateStatusDisplay(status) {
@@ -882,7 +972,7 @@ function toggleCam(btn) {
 // UTILS
 function formatTime(d) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
 }
 
 function updateTabTitle() {
@@ -1068,7 +1158,202 @@ function updateSmsInboxBadge() {
 // Call on load
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateSmsInboxBadge, 500);
+  checkNotificationPermission();
 });
+
+// ── QUOTE MESSAGE ──────────────────────────────────────────
+function quoteMessage(msgId) {
+  const group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (!group) return;
+  const bubble = group.querySelector('.msg-bubble');
+  const meta   = group.querySelector('.msg-meta strong');
+  const sender = meta ? meta.textContent : 'Unknown';
+  
+  // Get text but exclude emoji reactions and action buttons
+  let text = '';
+  if (bubble) {
+    // Clone the bubble to manipulate it
+    const clone = bubble.cloneNode(true);
+    // Remove action buttons and reactions
+    const actions = clone.querySelector('.msg-actions');
+    if (actions) actions.remove();
+    // Get text and clean up
+    text = clone.innerText
+      .replace(/👍|❤️|😂|🗑️|↩️|✏️/g, '') // Remove any remaining emoji icons
+      .replace(/[\n\r]+/g, ' ')           // Replace newlines with spaces
+      .trim()
+      .slice(0, 200);
+  }
+
+  state.quoteMsg = { id: msgId, sender: sender, text: text };
+  const preview = document.getElementById('quotePreview');
+  const previewText = document.getElementById('quotePreviewText');
+  previewText.innerHTML = '<strong>' + escapeHtml(sender) + ':</strong> ' + escapeHtml(text.slice(0, 100));
+  preview.classList.add('show');
+  document.getElementById('msgInput').focus();
+}
+
+function cancelQuote() {
+  state.quoteMsg = null;
+  document.getElementById('quotePreview').classList.remove('show');
+}
+
+function scrollToMsg(msgId) {
+  if (!msgId) return;
+  const group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (group) {
+    group.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    group.style.background = 'rgba(98,100,167,0.3)';
+    setTimeout(function() { group.style.background = ''; }, 1500);
+  }
+}
+
+// ── EDIT MESSAGE ──────────────────────────────────────────
+function startEdit(msgId) {
+  const group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (!group) return;
+
+  // Get the plain text from the bubble (strip HTML tags and <br> back to newlines)
+  const bubble = document.getElementById('bubble-' + msgId);
+  let currentText = '';
+  if (bubble) {
+    // Clone and remove action buttons AND quote block before reading text
+    const clone = bubble.cloneNode(true);
+    const actions = clone.querySelector('.msg-actions');
+    if (actions) actions.remove();
+    const quote = clone.querySelector('.msg-quote');
+    if (quote) quote.remove();
+    // Convert <br> back to newlines, then strip remaining tags
+    currentText = clone.innerHTML
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .trim();
+  }
+
+  // Build a full-width edit row and insert it after the group
+  const editRow = document.createElement('div');
+  editRow.className = 'msg-editing';
+  editRow.id = 'editrow-' + msgId;
+  editRow.innerHTML =
+    '<div class="msg-edit-label">✏️ Editing message</div>' +
+    '<textarea class="msg-edit-area" id="edit-' + msgId + '">' + currentText + '</textarea>' +
+    '<div class="msg-edit-actions">' +
+      '<button class="msg-edit-save" onclick="saveEdit(\'' + msgId + '\')">Save</button>' +
+      '<button class="msg-edit-cancel" onclick="cancelEdit(\'' + msgId + '\')">Cancel</button>' +
+      '<span style="font-size:11px;color:var(--text-muted);margin-left:6px;">Enter to save · Esc to cancel</span>' +
+    '</div>';
+
+  // Hide the original group and insert edit row after it
+  group.style.display = 'none';
+  group.parentNode.insertBefore(editRow, group.nextSibling);
+
+  const ta = document.getElementById('edit-' + msgId);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  // Auto-resize the textarea
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  ta.addEventListener('input', function() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  });
+
+  // Keyboard shortcuts
+  ta.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId); }
+    if (e.key === 'Escape') { cancelEdit(msgId); }
+  });
+
+  editRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function saveEdit(msgId) {
+  const textarea = document.getElementById('edit-' + msgId);
+  if (!textarea) return;
+  const newText = textarea.value.trim();
+  if (!newText) { alert('Message cannot be empty.'); return; }
+
+  if (!isOnline()) {
+    alert('Cannot edit messages while offline.');
+    cancelEdit(msgId);
+    return;
+  }
+
+  await db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId).update({
+    text: escapeHtml(newText),
+    edited: true,
+  });
+  // Firestore listener will re-render and remove the edit row
+}
+
+function cancelEdit(msgId) {
+  // Remove edit row and restore original group
+  const editRow = document.getElementById('editrow-' + msgId);
+  if (editRow) editRow.remove();
+  const group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (group) group.style.display = '';
+}
+
+// ── NOTIFICATIONS ──────────────────────────────────────────
+function checkNotificationPermission() {
+  if (!('Notification' in window)) return;
+  const btn = document.getElementById('notifBtn');
+  if (Notification.permission === 'default') {
+    btn.style.display = 'inline-block';
+  } else if (Notification.permission === 'granted') {
+    btn.style.display = 'none';
+  }
+}
+
+function requestNotificationPermission() {
+  if (!('Notification' in window)) {
+    alert('Notifications not supported in this browser.');
+    return;
+  }
+  Notification.requestPermission().then(function(perm) {
+    if (perm === 'granted') {
+      document.getElementById('notifBtn').style.display = 'none';
+      showNotifToast('Notifications enabled', 'You will be notified of new messages.');
+    }
+  });
+}
+
+function showNotifToast(title, body) {
+  let toast = document.getElementById('notifToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'notifToast';
+    toast.className = 'notif-toast';
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML =
+    '<div class="notif-toast-title">' + escapeHtml(title) + '</div>' +
+    '<div class="notif-toast-body">' + escapeHtml(body) + '</div>';
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function() { toast.classList.remove('show'); }, 4000);
+}
+
+function showBrowserNotification(title, body, channelId) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (document.hasFocus()) return; // Don't notify if window is focused
+  const notif = new Notification(title, {
+    body: body,
+    icon: 'M-LOGO.png',
+    tag: channelId,
+  });
+  notif.onclick = function() {
+    window.focus();
+    loadChannel(channelId);
+    notif.close();
+  };
+}
+
+// Hook into message listener to trigger notifications
+// Modify loadChannel's onSnapshot to call showBrowserNotification for new messages from others
+// We'll patch this in the existing code by wrapping the logic
 
 // CLOSE PICKERS ON OUTSIDE CLICK
 document.addEventListener('click', function(e) {

@@ -8,6 +8,9 @@
 </head>
 <body>
 
+<!-- SIDEBAR BACKDROP (mobile) -->
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebarMobile()"></div>
+
 <!-- SIDEBAR -->
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
@@ -62,10 +65,11 @@
       <span class="channel-desc" id="channelDesc">General discussion</span>
     </div>
     <div class="topbar-right">
-      <button class="icon-btn" onclick="toggleConvSearch()" title="Search conversation">🔍 Search</button>
-      <button class="icon-btn" onclick="toggleMembers()" title="Members">👥 Members</button>
-      <button class="icon-btn" onclick="openVideoCall()" title="Video Call">📹 Call</button>
-      <button class="icon-btn sms-inbox-btn" id="smsInboxBtn" onclick="toggleSmsInbox()" title="SMS Inbox">📱 SMS <span id="smsInboxCount" class="sms-inbox-count" style="display:none">0</span></button>
+      <button class="icon-btn" onclick="requestNotificationPermission()" id="notifBtn" title="Enable notifications" style="display:none">🔔 <span class="btn-label">Notify</span></button>
+      <button class="icon-btn" onclick="toggleConvSearch()" title="Search conversation">🔍 <span class="btn-label">Search</span></button>
+      <button class="icon-btn" onclick="toggleMembers()" title="Members">👥 <span class="btn-label">Members</span></button>
+      <button class="icon-btn" onclick="openVideoCall()" title="Video Call">📹 <span class="btn-label">Call</span></button>
+      <button class="icon-btn sms-inbox-btn" id="smsInboxBtn" onclick="toggleSmsInbox()" title="SMS Inbox">📱 <span class="btn-label">SMS</span> <span id="smsInboxCount" class="sms-inbox-count" style="display:none">0</span></button>
     </div>
   </div>
 
@@ -84,12 +88,19 @@
   <!-- Typing Indicator -->
   <div class="typing-indicator" id="typingIndicator"></div>
 
+  <!-- Quote Preview -->
+  <div class="quote-preview" id="quotePreview">
+    <span>↩️</span>
+    <div class="quote-preview-text" id="quotePreviewText"></div>
+    <span class="quote-cancel" onclick="cancelQuote()" title="Cancel quote">✕</span>
+  </div>
+
   <!-- Input Bar -->
   <div class="input-bar">
     <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">📎</button>
     <input type="file" id="fileInput" style="display:none" onchange="attachFile(this)">
     <div class="input-wrapper">
-      <textarea id="msgInput" placeholder="Type a message..." rows="1"
+      <textarea id="msgInput" placeholder="Type a message... (Shift+Enter for new line)" rows="1"
         onkeydown="handleKey(event)" oninput="autoResize(this); showTyping()"></textarea>
     </div>
     <button class="emoji-btn" onclick="toggleEmojiPicker()" title="Emoji">😊</button>
