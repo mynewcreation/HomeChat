@@ -101,9 +101,10 @@ const state = {
   currentChannel: 'general',
   currentUser: {},
   unread: {},
-  unreadSenders: {},        // { channelId: Set of sender names with unread msgs }
-  unreadMsgIds: new Set(),  // message IDs that are unread (bold sender name in bubble)
-  lastSender: {},           // { channelId: 'SenderName' } — last unread sender per channel
+  unreadSenders: {},
+  unreadMsgIds: new Set(),
+  lastSender: {},
+  dmLastActivity: {},       // { channelId: timestamp ms } — for sorting DMs by recent activity
   msgCount: {},
   notifCount: {},
   unsubscribeMessages: null,
@@ -165,6 +166,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderMembers(users);
         // Re-start notif listeners now that DM channels are known
         if (isOnline()) setTimeout(startNotifListeners, 800);
+        // Seed DM activity timestamps from cached messages for initial sort
+        seedDmActivityFromCache(users);
       });
   } else {
     const cached = OfflineStore.getCachedUsers();
@@ -346,50 +349,81 @@ function renderChannels(filter) {
     });
 }
 
-// RENDER DMs
+// RENDER DMs — sorted by most recent activity (latest message first)
 function renderDMs(users, filter) {
   filter = filter || '';
   const list = document.getElementById('dmList');
   list.innerHTML = '';
-  users
+
+  var filtered = users
     .filter(function(u) { return u.name !== state.currentUser.name; })
-    .filter(function(u) { return u.name.toLowerCase().includes(filter.toLowerCase()); })
-    .forEach(function(u) {
-      const dmId      = dmChannelId(state.currentUser.name, u.name);
-      const hasUnread = state.unread[dmId] > 0;
+    .filter(function(u) { return u.name.toLowerCase().includes((filter || '').toLowerCase()); });
 
-      const div = document.createElement('div');
-      div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
-      div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
+  // Sort: most recent activity first, then alphabetical for ties
+  filtered.sort(function(a, b) {
+    var dmA = dmChannelId(state.currentUser.name, a.name);
+    var dmB = dmChannelId(state.currentUser.name, b.name);
+    var tA  = state.dmLastActivity[dmA] || 0;
+    var tB  = state.dmLastActivity[dmB] || 0;
+    if (tB !== tA) return tB - tA; // most recent first
+    return a.name.localeCompare(b.name);
+  });
 
-      // Status dot
-      const dot = document.createElement('span');
-      dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
+  filtered.forEach(function(u) {
+    const dmId      = dmChannelId(state.currentUser.name, u.name);
+    const hasUnread = state.unread[dmId] > 0;
 
-      // Name — bold + orange when unread, normal when read
-      const nameSpan = document.createElement('span');
-      nameSpan.textContent = u.name;
-      nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
-        (hasUnread ? 'font-weight:700;color:#f07800;' : '');
+    const div = document.createElement('div');
+    div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
+    div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
 
-      div.appendChild(dot);
-      div.appendChild(nameSpan);
+    // Status dot
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
 
-      if (hasUnread) {
-        const badge = document.createElement('span');
-        badge.className = 'badge';
-        badge.textContent = state.unread[dmId];
-        div.appendChild(badge);
-      }
+    // Name — bold + orange when unread, normal when read
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = u.name;
+    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;' +
+      (hasUnread ? 'font-weight:700;color:#f07800;' : '');
 
-      list.appendChild(div);
-    });
+    div.appendChild(dot);
+    div.appendChild(nameSpan);
+
+    if (hasUnread) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = state.unread[dmId];
+      div.appendChild(badge);
+    }
+
+    list.appendChild(div);
+  });
 }
 
 // Helper to re-render DMs from cached users
 function renderDMsFromCache() {
   const cached = OfflineStore.getCachedUsers();
   renderDMs(cached);
+}
+
+// Seed DM activity timestamps from cached messages so sort order is correct on load
+function seedDmActivityFromCache(users) {
+  if (!users) users = OfflineStore.getCachedUsers();
+  users.forEach(function(u) {
+    if (u.name === state.currentUser.name) return;
+    var dmId = dmChannelId(state.currentUser.name, u.name);
+    if (state.dmLastActivity[dmId]) return; // already set
+    var msgs = OfflineStore.getCachedMessages(dmId);
+    if (msgs && msgs.length > 0) {
+      var last = msgs[msgs.length - 1];
+      var ts = last.timestamp && last.timestamp.toDate
+        ? last.timestamp.toDate().getTime()
+        : (last.time ? new Date().getTime() : 0);
+      if (ts) state.dmLastActivity[dmId] = ts;
+    }
+  });
+  renderDMsFromCache();
 }
 
 function dmChannelId(a, b) {
@@ -438,7 +472,12 @@ function loadChannel(id, title, desc) {
   state.currentChannel = id;
   state.unread[id]     = 0;
   state.unreadSenders[id] = new Set();
-  state.lastSender[id]    = null;  // clear last sender on open
+  state.lastSender[id]    = null;
+  // Update DM sort order when opening a DM
+  if (id.startsWith('dm-')) {
+    state.dmLastActivity[id] = state.dmLastActivity[id] || Date.now();
+    renderDMsFromCache();
+  }
   // Clear unread message IDs for this channel — loading it counts as reading
   // We'll clear them after messages render so the bold shows briefly then fades
   updateTabTitle();
@@ -513,6 +552,11 @@ function loadChannel(id, title, desc) {
       }
 
       state.msgCount[id] = newCount;
+      // Update DM sort order whenever this channel gets any message activity
+      if (id.startsWith('dm-') && newCount > 0) {
+        state.dmLastActivity[id] = Date.now();
+        renderDMsFromCache();
+      }
       OfflineStore.cacheMessages(id, msgs);
       renderMessages(msgs);
     });
@@ -1749,6 +1793,8 @@ function startNotifListeners() {
         if (!state.unreadSenders[ch.id]) state.unreadSenders[ch.id] = new Set();
         state.unreadSenders[ch.id].add(m.sender);
         state.lastSender[ch.id] = m.sender;
+        // Record activity time for DM sort order
+        state.dmLastActivity[ch.id] = Date.now();
 
         renderChannels();
         renderDMsFromCache();
