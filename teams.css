@@ -1387,82 +1387,38 @@ body {
     overflow: hidden;
   }
 
-  /* ── MOBILE: Two-panel layout like Messenger ──
-     Default: sidebar fills full screen (conversation list)
-     Chat open: main fills full screen, sidebar hidden left
-  ── */
-
-  /* Body is the viewport container */
-  body {
-    position: relative;
-    overflow: hidden;
-  }
-
-  /* Sidebar = full-screen conversation list by default */
+  /* ── Sidebar: slide-in drawer ── */
   .sidebar {
     position: fixed;
     top: 0; left: 0;
-    width: 100%;
-    max-width: 100%;
+    height: 100%;
+    width: 78vw;
+    max-width: 280px;
     min-width: unset;
-    height: 100%;
-    z-index: 10;
-    transform: translateX(0);
-    transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
-    overflow-y: auto;
-    overflow-x: hidden;
-    box-shadow: none;
-  }
-
-  /* Main chat = off-screen to the right by default */
-  .main {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    transform: translateX(100%);
-    transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
-    z-index: 20;
-    background: var(--bg-main);
-  }
-
-  /* When a chat is open — slide sidebar out left, main in */
-  body.chat-open .sidebar {
+    z-index: 9000;
     transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.7);
+    overflow-y: auto;
   }
 
-  body.chat-open .main {
-    transform: translateX(0);
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 8999;
   }
+  .sidebar-backdrop.show { display: block; }
 
-  /* No backdrop needed — full-screen panels */
-  .sidebar-backdrop { display: none !important; }
-
-  /* Sidebar header — bigger, app-bar style */
-  .sidebar-header {
-    padding: 12px 14px 10px;
-    position: sticky;
-    top: 0;
-    background: var(--sidebar-bg);
-    z-index: 1;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-  }
-
-  .app-name { font-size: 18px; font-weight: 700; }
-
-  .sidebar-profile { padding: 8px 14px 10px; }
-  .section-label { padding: 6px 14px 3px; font-size: 10px; }
-  .channel-item { padding: 10px 14px; font-size: 14px; min-height: 44px; }
-  .add-channel-btn { margin: 4px 12px; font-size: 12px; width: calc(100% - 24px); padding: 8px; }
-
-  /* Back button in topbar — replaces hamburger on mobile */
-  .hamburger {
-    font-size: 22px;
-    padding: 4px 6px;
-  }
+  .sidebar-header { padding: 8px 10px; }
+  .app-name { font-size: 13px; }
+  .sidebar-profile { padding: 6px 10px; }
+  .section-label { padding: 4px 10px 2px; font-size: 10px; }
+  .channel-item { padding: 7px 10px; font-size: 12px; min-height: 30px; }
+  .add-channel-btn { margin: 3px 8px; font-size: 11px; width: calc(100% - 16px); padding: 4px; }
 
   /* ── Topbar ── */
   .topbar {
