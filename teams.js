@@ -1337,28 +1337,52 @@ function insertEmoji(emoji) {
 
 // SIDEBAR / MEMBERS
 function toggleSidebar() {
-  const sidebar   = document.getElementById('sidebar');
-  const backdrop  = document.getElementById('sidebarBackdrop');
-  const isMobile  = window.innerWidth <= 640;
-
+  const isMobile = window.innerWidth <= 640;
   if (isMobile) {
-    const isOpen = sidebar.classList.contains('mobile-open');
-    sidebar.classList.toggle('mobile-open', !isOpen);
-    backdrop.classList.toggle('show', !isOpen);
+    // On mobile: hamburger = back button — go back to conversation list
+    closeSidebarMobile();
   } else {
-    sidebar.classList.toggle('collapsed');
+    document.getElementById('sidebar').classList.toggle('collapsed');
   }
 }
 
 function closeSidebarMobile() {
-  document.getElementById('sidebar').classList.remove('mobile-open');
-  document.getElementById('sidebarBackdrop').classList.remove('show');
+  document.body.classList.remove('chat-open');
+  // Update hamburger to show app icon / menu (not back arrow)
+  updateHamburgerIcon(false);
+}
+
+// Mobile: handle browser back button to return to conversation list
+window.addEventListener('popstate', function() {
+  if (window.innerWidth <= 640 && document.body.classList.contains('chat-open')) {
+    closeSidebarMobile();
+  }
+});
+
+// Push a history state when opening a chat on mobile so back button works
+function openChatMobile() {
+  document.body.classList.add('chat-open');
+  updateHamburgerIcon(true);
+  // Push state so browser back button works
+  if (window.innerWidth <= 640) {
+    history.pushState({ chatOpen: true }, '');
+  }
+}
+
+function updateHamburgerIcon(isChatOpen) {
+  var btn = document.querySelector('.hamburger');
+  if (!btn) return;
+  if (window.innerWidth > 640) return;
+  btn.textContent = isChatOpen ? '←' : '☰';
+  btn.title = isChatOpen ? 'Back to chats' : 'Menu';
 }
 
 // Close sidebar when a channel is tapped on mobile
 function loadChannelAndCloseSidebar(id, title, desc) {
-  if (window.innerWidth <= 640) closeSidebarMobile();
   loadChannel(id, title, desc);
+  if (window.innerWidth <= 640) {
+    openChatMobile();
+  }
 }
 
 function toggleMembers()  { document.getElementById('membersPanel').classList.toggle('open'); }
@@ -2064,15 +2088,19 @@ function updateSmsInboxBadge() {
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateSmsInboxBadge, 500);
   checkNotificationPermission();
-  updateFavicon(false); // set initial purple favicon
+  updateFavicon(false);
+
+  // Mobile: start on the conversation list (sidebar), not the chat
+  if (window.innerWidth <= 640) {
+    document.body.classList.remove('chat-open');
+    updateHamburgerIcon(false);
+  }
 
   // ── Mobile keyboard fix ──────────────────────────────────
-  // When the virtual keyboard opens on mobile, scroll the input into view
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function() {
       var inputBar = document.getElementById('msgInput');
       if (!inputBar) return;
-      // Small delay to let the browser finish resizing
       setTimeout(function() {
         inputBar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }, 100);
