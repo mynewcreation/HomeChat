@@ -144,6 +144,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadChannelMeta();
   renderChannels();
 
+  // ── Quick Firestore connectivity test ──────────────────────
+  if (isOnline()) {
+    db.collection('users').limit(1).get().catch(function(err) {
+      if (err.code === 'permission-denied') {
+        var banner = document.getElementById('offlineBanner');
+        banner.style.display = 'block';
+        banner.style.background = '#c0392b';
+        banner.innerHTML = '🔒 Firestore rules expired — go to Firebase Console → Firestore → Rules → set <b>allow read, write: if true;</b> and Publish.';
+      }
+    });
+  }
+
   if (channels.length > 0) {
     loadChannel(channels[0].id);
   } else {
@@ -656,6 +668,19 @@ function loadChannel(id, title, desc) {
       }
       OfflineStore.cacheMessages(id, msgs);
       renderMessages(msgs);
+
+    }, function(err) {
+      // ── Firestore listener error handler ──────────────────
+      console.error('Firestore listener error:', err.code, err.message);
+      if (err.code === 'permission-denied') {
+        var banner = document.getElementById('offlineBanner');
+        banner.style.display = 'block';
+        banner.style.background = '#c0392b';
+        banner.innerHTML = '🔒 Firestore permission denied — update your security rules to allow read/write.';
+      } else {
+        var cached = OfflineStore.getCachedMessages(id);
+        if (cached.length) renderMessages(cached);
+      }
     });
 }
 
@@ -906,7 +931,7 @@ async function sendMessage() {
   const msg = {
     sender:    state.currentUser.name,
     color:     state.currentUser.color,
-    text:      text,   // store raw — renderText() handles escaping + links on display
+    text:      text,
     time:      formatTime(new Date()),
     reactions: [],
   };
@@ -920,7 +945,6 @@ async function sendMessage() {
   }
 
   if (!isOnline()) {
-    // Queue for later sync
     const offlineMsg = Object.assign({}, msg, {
       id:        'offline-' + Date.now(),
       timestamp: { toDate: function() { return new Date(); } },
@@ -928,16 +952,42 @@ async function sendMessage() {
     });
     OfflineStore.addToOutbox(state.currentChannel, msg);
     OfflineStore.appendCachedMessage(state.currentChannel, offlineMsg);
-    // Show immediately in UI
     const area = document.getElementById('messagesArea');
     appendMessageEl(area, offlineMsg);
     area.scrollTop = area.scrollHeight;
     return;
   }
 
-  await db.collection('channels').doc(state.currentChannel).collection('messages').add(
-    Object.assign({}, msg, { timestamp: firebase.firestore.FieldValue.serverTimestamp() })
-  );
+  // ── Optimistic UI: show message immediately before Firestore confirms ──
+  const optimisticMsg = Object.assign({}, msg, {
+    id:        'opt-' + Date.now(),
+    timestamp: { toDate: function() { return new Date(); } },
+    pending:   true,
+  });
+  const area = document.getElementById('messagesArea');
+  appendMessageEl(area, optimisticMsg);
+  area.scrollTop = area.scrollHeight;
+
+  try {
+    await db.collection('channels').doc(state.currentChannel).collection('messages').add(
+      Object.assign({}, msg, { timestamp: firebase.firestore.FieldValue.serverTimestamp() })
+    );
+    // Remove optimistic bubble — onSnapshot will render the real one
+    var optEl = document.querySelector('[data-msg-id="' + optimisticMsg.id + '"]');
+    if (optEl) optEl.remove();
+  } catch (err) {
+    // Show error on the optimistic bubble
+    var optEl = document.querySelector('[data-msg-id="' + optimisticMsg.id + '"]');
+    if (optEl) {
+      optEl.style.opacity = '0.5';
+      optEl.title = 'Failed to send: ' + err.message;
+    }
+    console.error('Send failed:', err);
+    // If permission denied, show helpful message
+    if (err.code === 'permission-denied') {
+      showSyncToast('⚠️ Permission denied — check Firestore rules');
+    }
+  }
 }
 
 function handleKey(e) {
@@ -1337,28 +1387,52 @@ function insertEmoji(emoji) {
 
 // SIDEBAR / MEMBERS
 function toggleSidebar() {
-  const sidebar   = document.getElementById('sidebar');
-  const backdrop  = document.getElementById('sidebarBackdrop');
-  const isMobile  = window.innerWidth <= 640;
-
+  const isMobile = window.innerWidth <= 640;
   if (isMobile) {
-    const isOpen = sidebar.classList.contains('mobile-open');
-    sidebar.classList.toggle('mobile-open', !isOpen);
-    backdrop.classList.toggle('show', !isOpen);
+    // On mobile: hamburger = back button — go back to conversation list
+    closeSidebarMobile();
   } else {
-    sidebar.classList.toggle('collapsed');
+    document.getElementById('sidebar').classList.toggle('collapsed');
   }
 }
 
 function closeSidebarMobile() {
-  document.getElementById('sidebar').classList.remove('mobile-open');
-  document.getElementById('sidebarBackdrop').classList.remove('show');
+  document.body.classList.remove('chat-open');
+  // Update hamburger to show app icon / menu (not back arrow)
+  updateHamburgerIcon(false);
+}
+
+// Mobile: handle browser back button to return to conversation list
+window.addEventListener('popstate', function() {
+  if (window.innerWidth <= 640 && document.body.classList.contains('chat-open')) {
+    closeSidebarMobile();
+  }
+});
+
+// Push a history state when opening a chat on mobile so back button works
+function openChatMobile() {
+  document.body.classList.add('chat-open');
+  updateHamburgerIcon(true);
+  // Push state so browser back button works
+  if (window.innerWidth <= 640) {
+    history.pushState({ chatOpen: true }, '');
+  }
+}
+
+function updateHamburgerIcon(isChatOpen) {
+  var btn = document.querySelector('.hamburger');
+  if (!btn) return;
+  if (window.innerWidth > 640) return;
+  btn.textContent = isChatOpen ? '←' : '☰';
+  btn.title = isChatOpen ? 'Back to chats' : 'Menu';
 }
 
 // Close sidebar when a channel is tapped on mobile
 function loadChannelAndCloseSidebar(id, title, desc) {
-  if (window.innerWidth <= 640) closeSidebarMobile();
   loadChannel(id, title, desc);
+  if (window.innerWidth <= 640) {
+    openChatMobile();
+  }
 }
 
 function toggleMembers()  { document.getElementById('membersPanel').classList.toggle('open'); }
@@ -1779,7 +1853,11 @@ function linkify(escapedText) {
 
 // Escape HTML then convert newlines and linkify
 function renderText(str) {
-  var escaped = escapeHtml(str);
+  if (!str) return '';
+  // Detect if text is already HTML-escaped (legacy messages stored with escapeHtml)
+  // by checking for common escape sequences — if found, don't double-escape
+  var alreadyEscaped = /&amp;|&lt;|&gt;/.test(str);
+  var escaped = alreadyEscaped ? str : escapeHtml(str);
   // Convert newlines to <br>
   escaped = escaped.replace(/\n/g, '<br>');
   // Make URLs clickable
@@ -2064,15 +2142,19 @@ function updateSmsInboxBadge() {
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateSmsInboxBadge, 500);
   checkNotificationPermission();
-  updateFavicon(false); // set initial purple favicon
+  updateFavicon(false);
+
+  // Mobile: start on the conversation list (sidebar), not the chat
+  if (window.innerWidth <= 640) {
+    document.body.classList.remove('chat-open');
+    updateHamburgerIcon(false);
+  }
 
   // ── Mobile keyboard fix ──────────────────────────────────
-  // When the virtual keyboard opens on mobile, scroll the input into view
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function() {
       var inputBar = document.getElementById('msgInput');
       if (!inputBar) return;
-      // Small delay to let the browser finish resizing
       setTimeout(function() {
         inputBar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }, 100);
