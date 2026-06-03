@@ -164,35 +164,6 @@ h1 {
   text-align: left;
 }
 
-/* ── Network badge ── */
-.network-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 16px;
-  margin-bottom: 18px;
-  letter-spacing: .3px;
-}
-
-.network-badge.online {
-  background: rgba(146, 195, 83, 0.15);
-  color: #92c353;
-  border: 1px solid rgba(146, 195, 83, 0.3);
-}
-
-.network-badge.offline {
-  background: rgba(196, 49, 75, 0.15);
-  color: #ff6b6b;
-  border: 1px solid rgba(196, 49, 75, 0.3);
-  animation: pulse-badge 2s infinite;
-}
-
-@keyframes pulse-badge {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.6; }
-}
-
 /* ── Mobile ── */
 @media (max-width: 480px) {
   body { padding: 10px; align-items: flex-start; padding-top: 20px; }

@@ -18,18 +18,7 @@ const firebaseConfig = {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 
-// Enable offline persistence — app works without internet, syncs when reconnected
 const db = firebase.firestore();
-db.enablePersistence({ synchronizeTabs: true }).catch(function(err) {
-  if (err.code === 'failed-precondition') {
-    // Multiple tabs open — persistence only works in one tab at a time
-    console.warn('Offline persistence unavailable: multiple tabs open.');
-  } else if (err.code === 'unimplemented') {
-    // Browser doesn't support it
-    console.warn('Offline persistence not supported in this browser.');
-  }
-});
-
 const storage = firebase.storage();
 
 

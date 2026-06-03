@@ -566,15 +566,6 @@ body {
   background: var(--border);
 }
 
-.typing-indicator {
-  height: 18px;
-  padding: 0 20px;
-  font-size: 11px;
-  color: var(--text-muted);
-  font-style: italic;
-  background: var(--bg-messages);
-}
-
 /* ── INPUT BAR ── */
 .input-bar {
   display: flex;
@@ -1055,14 +1046,6 @@ body {
 .channel-item .ch-menu-btn:hover { background: rgba(255,255,255,0.15); border-radius: 3px; }
 
 /* OFFLINE BANNER */
-.offline-banner {
-  background: #e67e22;
-  color: #fff;
-  text-align: center;
-  font-size: 12px;
-  padding: 5px 14px;
-  flex-shrink: 0;
-}
 
 /* PROFILE PHOTO */
 .avatar-upload-area {
@@ -1204,167 +1187,6 @@ body {
 /* dim non-matching message groups */
 .msg-group.search-hidden { display: none; }
 
-/* ── SMS MESSAGES ── */
-.sms-avatar {
-  font-size: 16px;
-  background: #e67e22 !important;
-}
-
-.sms-bubble {
-  border-left: 3px solid #e67e22 !important;
-  background: rgba(230,126,34,0.12) !important;
-}
-
-.sms-badge {
-  display: inline-block;
-  background: rgba(230,126,34,0.25);
-  color: #f0a060;
-  font-size: 10px;
-  font-weight: bold;
-  padding: 1px 5px;
-  border-radius: 6px;
-  margin-left: 5px;
-  vertical-align: middle;
-  letter-spacing: .3px;
-}
-
-.msg-group.sms-msg .msg-meta strong {
-  color: #e67e22;
-}
-
-/* ── OFFLINE / PENDING MESSAGES ── */
-.pending-bubble {
-  opacity: 0.6;
-  border-style: dashed !important;
-}
-
-.pending-badge {
-  display: inline-block;
-  background: rgba(248,210,42,0.2);
-  color: #f8d22a;
-  font-size: 10px;
-  font-weight: bold;
-  padding: 1px 5px;
-  border-radius: 6px;
-  margin-left: 5px;
-  vertical-align: middle;
-}
-
-/* ── SMS TOAST NOTIFICATION ── */
-.sms-toast {
-  position: fixed;
-  bottom: 75px;
-  right: 18px;
-  background: #1e1f3b;
-  color: #fff;
-  padding: 10px 16px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  max-width: 280px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  border-left: 4px solid #e67e22;
-  z-index: 99999;
-  opacity: 0;
-  transform: translateY(20px);
-  transition: opacity 0.3s, transform 0.3s;
-  pointer-events: none;
-}
-
-.sms-toast.show {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* ── SYNC TOAST ── */
-.sync-toast {
-  position: fixed;
-  bottom: 75px;
-  left: 50%;
-  transform: translateX(-50%) translateY(20px);
-  background: var(--teams-purple);
-  color: #fff;
-  padding: 8px 18px;
-  border-radius: 16px;
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  z-index: 99999;
-  opacity: 0;
-  transition: opacity 0.3s, transform 0.3s;
-  pointer-events: none;
-}
-
-.sync-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-/* ── SMS INBOX PANEL ── */
-.sms-inbox-panel {
-  width: 0;
-  overflow: hidden;
-  background: var(--sidebar-bg);
-  border-left: 1px solid var(--border);
-  transition: width 0.3s ease;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.sms-inbox-panel.open { width: 240px; }
-
-.sms-inbox-item {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.sms-inbox-item:hover { background: rgba(255,255,255,0.06); }
-
-.sms-inbox-from {
-  font-size: 12px;
-  font-weight: 600;
-  color: #e67e22;
-  margin-bottom: 2px;
-}
-
-.sms-inbox-text {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 3px;
-  word-break: break-word;
-}
-
-.sms-inbox-meta {
-  font-size: 10px;
-  color: #555;
-}
-
-/* ── SMS INBOX BUTTON BADGE ── */
-.sms-inbox-count {
-  background: #c4314b;
-  color: #fff;
-  font-size: 10px;
-  font-weight: bold;
-  border-radius: 8px;
-  padding: 1px 4px;
-  margin-left: 3px;
-  vertical-align: middle;
-}
-
-/* ── OFFLINE BANNER VARIANTS ── */
-.offline-banner {
-  background: #e67e22;
-  color: #fff;
-  text-align: center;
-  font-size: 12px;
-  padding: 5px 14px;
-  flex-shrink: 0;
-  transition: background 0.4s;
-}
-
 /* ══════════════════════════════════════════════════════════
    MOBILE — 640px and below
    ══════════════════════════════════════════════════════════ */
@@ -1387,82 +1209,38 @@ body {
     overflow: hidden;
   }
 
-  /* ── MOBILE: Two-panel layout like Messenger ──
-     Default: sidebar fills full screen (conversation list)
-     Chat open: main fills full screen, sidebar hidden left
-  ── */
-
-  /* Body is the viewport container */
-  body {
-    position: relative;
-    overflow: hidden;
-  }
-
-  /* Sidebar = full-screen conversation list by default */
+  /* ── Sidebar: slide-in drawer ── */
   .sidebar {
     position: fixed;
     top: 0; left: 0;
-    width: 100%;
-    max-width: 100%;
+    height: 100%;
+    width: 78vw;
+    max-width: 280px;
     min-width: unset;
-    height: 100%;
-    z-index: 10;
-    transform: translateX(0);
-    transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
-    overflow-y: auto;
-    overflow-x: hidden;
-    box-shadow: none;
-  }
-
-  /* Main chat = off-screen to the right by default */
-  .main {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    transform: translateX(100%);
-    transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
-    z-index: 20;
-    background: var(--bg-main);
-  }
-
-  /* When a chat is open — slide sidebar out left, main in */
-  body.chat-open .sidebar {
+    z-index: 9000;
     transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.7);
+    overflow-y: auto;
   }
 
-  body.chat-open .main {
-    transform: translateX(0);
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 8999;
   }
+  .sidebar-backdrop.show { display: block; }
 
-  /* No backdrop needed — full-screen panels */
-  .sidebar-backdrop { display: none !important; }
-
-  /* Sidebar header — bigger, app-bar style */
-  .sidebar-header {
-    padding: 12px 14px 10px;
-    position: sticky;
-    top: 0;
-    background: var(--sidebar-bg);
-    z-index: 1;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-  }
-
-  .app-name { font-size: 18px; font-weight: 700; }
-
-  .sidebar-profile { padding: 8px 14px 10px; }
-  .section-label { padding: 6px 14px 3px; font-size: 10px; }
-  .channel-item { padding: 10px 14px; font-size: 14px; min-height: 44px; }
-  .add-channel-btn { margin: 4px 12px; font-size: 12px; width: calc(100% - 24px); padding: 8px; }
-
-  /* Back button in topbar — replaces hamburger on mobile */
-  .hamburger {
-    font-size: 22px;
-    padding: 4px 6px;
-  }
+  .sidebar-header { padding: 8px 10px; }
+  .app-name { font-size: 13px; }
+  .sidebar-profile { padding: 6px 10px; }
+  .section-label { padding: 4px 10px 2px; font-size: 10px; }
+  .channel-item { padding: 7px 10px; font-size: 12px; min-height: 30px; }
+  .add-channel-btn { margin: 3px 8px; font-size: 11px; width: calc(100% - 16px); padding: 4px; }
 
   /* ── Topbar ── */
   .topbar {
@@ -1523,14 +1301,6 @@ body {
   }
 
   .date-divider { font-size: 10px; margin: 4px 0; }
-
-  /* ── Typing indicator: minimal ── */
-  .typing-indicator {
-    height: 14px;
-    padding: 0 8px;
-    font-size: 10px;
-    line-height: 14px;
-  }
 
   /* ── Message actions: tap to show, inline below bubble ── */
   .msg-bubble .msg-actions {
@@ -1658,17 +1428,6 @@ body {
     box-shadow: -4px 0 20px rgba(0,0,0,0.6);
   }
 
-  /* ── SMS inbox panel ── */
-  .sms-inbox-panel.open {
-    position: fixed;
-    top: 0; right: 0;
-    height: 100%;
-    width: 85vw;
-    max-width: 300px;
-    z-index: 9000;
-    box-shadow: -4px 0 20px rgba(0,0,0,0.6);
-  }
-
   /* ── Modals ── */
   .modal-box {
     width: calc(100vw - 24px);
@@ -1688,15 +1447,6 @@ body {
   .participants-list { max-height: 180px; }
 
   /* ── Toasts ── */
-  .sms-toast {
-    left: 6px; right: 6px;
-    max-width: unset;
-    bottom: calc(55px + env(safe-area-inset-bottom));
-    top: auto;
-    transform: translateY(20px);
-  }
-  .sms-toast.show { transform: translateY(0); }
-
   .undo-toast {
     left: 6px; right: 6px;
     transform: translateX(0) translateY(20px);
@@ -1740,32 +1490,6 @@ body {
   cursor: pointer;
 }
 .settings-select:focus { border-color: var(--teams-purple); }
-
-/* ── SMS INBOX FOOTER / SUBTITLE ── */
-.sms-inbox-subtitle {
-  padding: 8px 12px;
-  font-size: 11px;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.sms-inbox-footer {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.sms-clear-btn {
-  width: 100%;
-  padding: 8px;
-  background: rgba(196,49,75,0.15);
-  color: #ff6b6b;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: background 0.15s;
-}
-.sms-clear-btn:hover { background: rgba(196,49,75,0.3); }
 
 /* ── NEW LINE BUTTON (mobile only, now uses .ib-btn base) ── */
 .newline-btn {

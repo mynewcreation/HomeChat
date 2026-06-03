@@ -6,96 +6,6 @@
 // ── NETWORK HELPERS ──────────────────────────────────────────
 function isOnline() { return navigator.onLine; }
 
-// ── OFFLINE SMS POLLING ──────────────────────────────────────
-// Polls the local SMS bridge server for new messages when on LAN
-const SMS_BRIDGE_URL = 'http://localhost:3000';
-let smsPollTimer = null;
-
-function startSmsPoll() {
-  if (smsPollTimer) return;
-  smsPollTimer = setInterval(fetchSmsFromBridge, 5000);
-  fetchSmsFromBridge(); // immediate first fetch
-}
-
-function stopSmsPoll() {
-  clearInterval(smsPollTimer);
-  smsPollTimer = null;
-}
-
-async function fetchSmsFromBridge() {
-  try {
-    const res  = await fetch(SMS_BRIDGE_URL + '/log?limit=20', { signal: AbortSignal.timeout(2000) });
-    const data = await res.json();
-    if (!Array.isArray(data)) return;
-
-    const seen = JSON.parse(localStorage.getItem('pc_seen_sms') || '[]');
-    let changed = false;
-
-    data.forEach(function(entry) {
-      if (seen.includes(entry.id)) return;
-      seen.push(entry.id);
-      changed = true;
-
-      const channelId = entry.channel || state.currentChannel;
-      const msg = {
-        id:        'sms-' + entry.id,
-        sender:    '📱 SMS (' + entry.from + ')',
-        color:     '#e67e22',
-        text:      escapeHtml(entry.text || ''),
-        time:      new Date(entry.receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: { toDate: function() { return new Date(entry.receivedAt); } },
-        reactions: [],
-        viaSms:    true,
-        smsFrom:   entry.from,
-        offline:   true,
-      };
-
-      // Store in offline cache
-      OfflineStore.addSmsMessage(channelId, msg);
-
-      // If this channel is currently open, append live
-      if (channelId === state.currentChannel) {
-        const area = document.getElementById('messagesArea');
-        appendMessageEl(area, msg);
-        area.scrollTop = area.scrollHeight;
-        showSmsToast(entry.from, entry.text);
-      } else {
-        // Unread badge
-        state.unread[channelId] = (state.unread[channelId] || 0) + 1;
-        if (!state.unreadSenders[channelId]) state.unreadSenders[channelId] = new Set();
-        state.unreadSenders[channelId].add(msg.sender);
-        renderChannels();
-        renderDMsFromCache();
-        updateTabTitle();
-        updateFavicon(true);
-        showSmsToast(entry.from, entry.text);
-      }
-    });
-
-    if (changed) {
-      // Keep seen list to last 500 entries
-      if (seen.length > 500) seen.splice(0, seen.length - 500);
-      localStorage.setItem('pc_seen_sms', JSON.stringify(seen));
-    }
-  } catch (e) {
-    // Bridge not reachable — silent fail
-  }
-}
-
-function showSmsToast(from, text) {
-  let toast = document.getElementById('smsToast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'smsToast';
-    toast.className = 'sms-toast';
-    document.body.appendChild(toast);
-  }
-  toast.innerHTML = '<strong>📱 SMS from ' + escapeHtml(from) + '</strong><br>' + escapeHtml((text || '').slice(0, 80));
-  toast.classList.add('show');
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(function() { toast.classList.remove('show'); }, 4000);
-}
-
 // STATE
 const state = {
   currentChannel: 'general',
@@ -111,7 +21,6 @@ const state = {
   unsubscribeUsers: null,
   unsubscribeNotifs: [],
   typingTimer: null,
-  isOffline: false,
   quoteMsg: null,
 };
 
@@ -121,7 +30,6 @@ const channels = [];
 // INIT
 document.addEventListener('DOMContentLoaded', async () => {
   state.currentUser = JSON.parse(sessionStorage.getItem('teamsUser'));
-  state.isOffline   = !isOnline() || !!state.currentUser.isOfflineSession;
 
   document.getElementById('myName').textContent        = state.currentUser.name;
   document.getElementById('myAvatar').textContent      = state.currentUser.name[0].toUpperCase();
@@ -136,25 +44,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ini) ini.style.display = 'none';
   }
 
-  // Show offline session badge if needed
-  if (state.currentUser.isOfflineSession) {
-    showOfflineSessionBanner();
-  }
-
   await loadChannelMeta();
   renderChannels();
-
-  // ── Quick Firestore connectivity test ──────────────────────
-  if (isOnline()) {
-    db.collection('users').limit(1).get().catch(function(err) {
-      if (err.code === 'permission-denied') {
-        var banner = document.getElementById('offlineBanner');
-        banner.style.display = 'block';
-        banner.style.background = '#c0392b';
-        banner.innerHTML = '🔒 Firestore rules expired — go to Firebase Console → Firestore → Rules → set <b>allow read, write: if true;</b> and Publish.';
-      }
-    });
-  }
 
   if (channels.length > 0) {
     loadChannel(channels[0].id);
@@ -166,168 +57,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Start notification listeners for all channels
-  if (isOnline()) {
-    setTimeout(startNotifListeners, 1500); // slight delay so msgCount is seeded first
-  }
+  setTimeout(startNotifListeners, 1500);
 
-  // Users listener — graceful offline fallback
-  if (isOnline()) {
-    state.unsubscribeUsers = db.collection('users').orderBy('name')
-      .onSnapshot(function(snap) {
-        // Handle deletions — remove from local cache immediately
-        snap.docChanges().forEach(function(change) {
-          if (change.type === 'removed') {
-            OfflineStore.removeCachedUser(change.doc.id);
-          }
-        });
-        const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
-        OfflineStore.cacheUsers(users);
-        renderDMs(users);
-        renderMembers(users);
-        // Re-start notif listeners now that DM channels are known
-        if (isOnline()) setTimeout(startNotifListeners, 800);
-        // Seed DM activity timestamps from cached messages for initial sort
-        seedDmActivityFromCache(users);
-      });
-  } else {
-    const cached = OfflineStore.getCachedUsers();
-    renderDMs(cached);
-    renderMembers(cached);
-  }
+  // Users listener
+  state.unsubscribeUsers = db.collection('users').orderBy('name')
+    .onSnapshot(function(snap) {
+      const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
+      _lastKnownUsers = users;
+      renderDMs(users);
+      renderMembers(users);
+      setTimeout(startNotifListeners, 800);
+      seedDmActivityFromCache(users);
+    });
 
   window.addEventListener('beforeunload', markOffline);
-
-  // Online / offline banner + sync
-  function handleOnlineChange() {
-    const online = isOnline();
-    state.isOffline = !online;
-    updateOfflineBanner(online);
-    if (online) {
-      syncOutbox();
-      // Reload channel from Firestore now that we're back
-      loadChannel(state.currentChannel);
-      // Re-subscribe users
-      if (!state.unsubscribeUsers) {
-        state.unsubscribeUsers = db.collection('users').orderBy('name')
-          .onSnapshot(function(snap) {
-            snap.docChanges().forEach(function(change) {
-              if (change.type === 'removed') {
-                OfflineStore.removeCachedUser(change.doc.id);
-              }
-            });
-            const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
-            OfflineStore.cacheUsers(users);
-            renderDMs(users);
-            renderMembers(users);
-          });
-      }
-    } else {
-      if (state.unsubscribeUsers) { state.unsubscribeUsers(); state.unsubscribeUsers = null; }
-    }
-  }
-
-  window.addEventListener('online',  handleOnlineChange);
-  window.addEventListener('offline', handleOnlineChange);
-  updateOfflineBanner(isOnline());
-
-  // Always poll SMS bridge (works on LAN regardless of internet)
-  startSmsPoll();
 });
 
 
-// OFFLINE BANNER + SESSION BANNER
-function updateOfflineBanner(online) {
-  const banner = document.getElementById('offlineBanner');
-  if (online && !state.currentUser.isOfflineSession) {
-    banner.style.display = 'none';
-  } else {
-    banner.style.display = 'block';
-    banner.innerHTML = online
-      ? '🔄 Back online — syncing messages...'
-      : '📡 You are offline — SMS still works via local bridge. Messages will sync when reconnected.';
-    banner.style.background = online ? '#27ae60' : '#e67e22';
-  }
-}
-
-function showOfflineSessionBanner() {
-  const banner = document.getElementById('offlineBanner');
-  banner.style.display = 'block';
-  banner.style.background = '#8e44ad';
-  banner.innerHTML = '🔒 Offline session — SMS inbox active. Outgoing messages queued until reconnected.';
-}
-
-// OUTBOX SYNC — flush queued messages to Firestore when back online
-async function syncOutbox() {
-  const outbox = OfflineStore.getOutbox();
-  if (!outbox.length) return;
-
-  let synced = 0;
-  for (let i = outbox.length - 1; i >= 0; i--) {
-    const item = outbox[i];
-    try {
-      await db.collection('channels').doc(item.channelId).collection('messages').add({
-        sender:    item.msg.sender,
-        color:     item.msg.color,
-        text:      item.msg.text,
-        time:      item.msg.time,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        reactions: [],
-      });
-      OfflineStore.removeFromOutbox(i);
-      synced++;
-    } catch (e) {
-      // leave in outbox, try next time
-    }
-  }
-
-  if (synced > 0) {
-    showSyncToast(synced + ' queued message' + (synced > 1 ? 's' : '') + ' synced ✓');
-  }
-}
-
-function showSyncToast(msg) {
-  let toast = document.getElementById('syncToast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'syncToast';
-    toast.className = 'sync-toast';
-    document.body.appendChild(toast);
-  }
-  toast.textContent = msg;
-  toast.classList.add('show');
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(function() { toast.classList.remove('show'); }, 3500);
-}
 async function loadChannelMeta() {
-  if (isOnline()) {
-    try {
-      const snap = await db.collection('channelMeta').get();
-      snap.docs.forEach(function(d) {
-        const data     = d.data();
-        const existing = channels.find(function(c) { return c.id === d.id; });
-        if (existing) {
-          if (data.label) existing.label = data.label;
-          if (data.desc)  existing.desc  = data.desc;
-        } else {
-          channels.push({ id: d.id, label: data.label || ('# ' + d.id), desc: data.desc || '', custom: true });
-        }
-      });
-      OfflineStore.cacheChannels(channels.map(function(c) { return Object.assign({}, c); }));
-    } catch (e) {
-      loadChannelMetaFromCache();
-    }
-  } else {
-    loadChannelMetaFromCache();
+  try {
+    const snap = await db.collection('channelMeta').get();
+    snap.docs.forEach(function(d) {
+      const data     = d.data();
+      const existing = channels.find(function(c) { return c.id === d.id; });
+      if (existing) {
+        if (data.label) existing.label = data.label;
+        if (data.desc)  existing.desc  = data.desc;
+      } else {
+        channels.push({ id: d.id, label: data.label || ('# ' + d.id), desc: data.desc || '', custom: true });
+      }
+    });
+  } catch (e) {
+    console.warn('Could not load channel metadata:', e.message);
   }
-}
-
-function loadChannelMetaFromCache() {
-  const cached = OfflineStore.getCachedChannels();
-  cached.forEach(function(ch) {
-    if (!channels.find(function(c) { return c.id === ch.id; })) {
-      channels.push(ch);
-    }
-  });
 }
 
 // RENDER CHANNELS
@@ -377,13 +139,12 @@ function renderDMs(users, filter) {
   var filtered = users
     .filter(function(u) { return u.name !== state.currentUser.name; })
     .filter(function(u) { return u.name.toLowerCase().includes((filter || '').toLowerCase()); })
-    // Only show if there is an existing conversation (has cached messages, unread, or known activity)
+    // Only show if there is an existing conversation (has unread or known activity)
     .filter(function(u) {
       var dmId = dmChannelId(state.currentUser.name, u.name);
-      var hasMsgs    = OfflineStore.getCachedMessages(dmId).length > 0;
       var hasUnread  = (state.unread[dmId] || 0) > 0;
       var hasActivity = (state.dmLastActivity[dmId] || 0) > 0;
-      return hasMsgs || hasUnread || hasActivity;
+      return hasUnread || hasActivity;
     });
 
   // Sort: most recent activity first, then alphabetical for ties
@@ -428,10 +189,10 @@ function renderDMs(users, filter) {
   renderNewDmButton(users, list);
 }
 
-// Helper to re-render DMs from cached users
+// Helper to re-render DMs from current users snapshot
+var _lastKnownUsers = [];
 function renderDMsFromCache() {
-  const cached = OfflineStore.getCachedUsers();
-  renderDMs(cached);
+  renderDMs(_lastKnownUsers);
 }
 
 // "New Message" button — lets user start a DM with someone they haven't talked to yet
@@ -456,12 +217,12 @@ function openNewDmModal(users) {
   overlay.id = 'newDmModal';
   _newDmModal = overlay;
 
-  var others = (users || OfflineStore.getCachedUsers())
+  var others = (users || _lastKnownUsers)
     .filter(function(u) { return u.name !== state.currentUser.name; });
 
   var rows = others.map(function(u) {
     var dmId = dmChannelId(state.currentUser.name, u.name);
-    var hasMsgs = OfflineStore.getCachedMessages(dmId).length > 0 || (state.dmLastActivity[dmId] || 0) > 0;
+    var hasMsgs = (state.dmLastActivity[dmId] || 0) > 0;
     return '<div class="new-dm-row" onclick="startDmWith(\'' + escapeHtml(u.name) + '\')">' +
       '<div class="user-avatar" style="background:' + u.color + ';width:28px;height:28px;font-size:12px;flex-shrink:0">' + u.name[0] + '</div>' +
       '<span style="flex:1;font-size:13px">' + escapeHtml(u.name) + '</span>' +
@@ -499,34 +260,14 @@ function startDmWith(userName) {
   renderDMsFromCache();
 }
 
-// Seed DM activity timestamps from cached messages so sort order is correct on load
-// Also checks Firestore for any existing DM conversations not yet cached
+// Seed DM activity timestamps so sort order is correct on load.
 function seedDmActivityFromCache(users) {
-  if (!users) users = OfflineStore.getCachedUsers();
+  if (!users) users = _lastKnownUsers;
   users.forEach(function(u) {
     if (u.name === state.currentUser.name) return;
     var dmId = dmChannelId(state.currentUser.name, u.name);
-    if (state.dmLastActivity[dmId]) return; // already set
-
-    // Check local cache first
-    var msgs = OfflineStore.getCachedMessages(dmId);
-    if (msgs && msgs.length > 0) {
-      var last = msgs[msgs.length - 1];
-      var ts = last.timestamp && last.timestamp.toDate
-        ? last.timestamp.toDate().getTime()
-        : Date.now();
-      if (ts) state.dmLastActivity[dmId] = ts;
-    } else if (isOnline()) {
-      // Check Firestore — if this DM has any messages, mark it as having activity
-      db.collection('channels').doc(dmId).collection('messages')
-        .orderBy('timestamp', 'desc').limit(1).get()
-        .then(function(snap) {
-          if (!snap.empty) {
-            var ts = snap.docs[0].data().timestamp;
-            state.dmLastActivity[dmId] = ts && ts.toDate ? ts.toDate().getTime() : Date.now();
-            renderDMsFromCache();
-          }
-        }).catch(function() {});
+    if (!state.dmLastActivity[dmId]) {
+      state.dmLastActivity[dmId] = 0;
     }
   });
   renderDMsFromCache();
@@ -596,29 +337,15 @@ function loadChannel(id, title, desc) {
   renderChannels();
   renderDMsFromCache();
 
-  // Restart notif listeners so the new current channel is excluded
-  // and the previous current channel gets a background listener
-  if (isOnline()) setTimeout(startNotifListeners, 500);
+  setTimeout(startNotifListeners, 500);
 
-  // Subscribe to typing indicators for this channel
-  subscribeTyping(id);
-
-  if (!isOnline()) {
-    // ── OFFLINE: render from cache + SMS inbox ──────────────
-    const cached = OfflineStore.getCachedMessages(id);
-    renderMessages(cached);
-    renderOutboxPending(id);
-    return;
-  }
-
-  // ── ONLINE: Firestore live listener ────────────────────────
+  // Firestore live listener
   state.unsubscribeMessages = db
     .collection('channels').doc(id).collection('messages')
     .orderBy('timestamp')
     .onSnapshot(function(snap) {
       var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       var newCount = msgs.length;
-      // Use -1 as sentinel: first snapshot never triggers notifications
       var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : -1;
 
       if (oldCount >= 0 && newCount > oldCount) {
@@ -627,73 +354,39 @@ function loadChannel(id, title, desc) {
         var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; });
 
         if (fromOthers.length > 0) {
-          // Unread badge for background channels
           if (id !== state.currentChannel) {
             state.unread[id] = (state.unread[id] || 0) + fromOthers.length;
-            // Track unread senders
             if (!state.unreadSenders[id]) state.unreadSenders[id] = new Set();
             fromOthers.forEach(function(m) { state.unreadSenders[id].add(m.sender); });
             renderChannels();
             renderDMsFromCache();
             updateTabTitle();
           }
-          // Mark message IDs as unread so sender name shows bold in bubble
           fromOthers.forEach(function(m) {
             if (m.id) state.unreadMsgIds.add(m.id);
           });
-          // Record last sender for sidebar display
           if (fromOthers.length > 0) {
             state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
           }
-          // Orange favicon on new unread message
           updateFavicon(true);
-          // Notify for every new message from others regardless of which channel
           fromOthers.forEach(function(m) {
             var chLabel = (channels.find(function(c) { return c.id === id; }) || {}).label || ('#' + id);
             var cleanText = (m.text || '')
               .replace(/<br\s*\/?>/gi, ' ')
               .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
               .slice(0, 100);
-            // Desktop browser notification (when window not focused)
             showBrowserNotification(m.sender + ' · ' + chLabel, cleanText, id);
           });
         }
       }
 
       state.msgCount[id] = newCount;
-      // Update DM sort order whenever this channel gets any message activity
       if (id.startsWith('dm-') && newCount > 0) {
         state.dmLastActivity[id] = Date.now();
         renderDMsFromCache();
       }
-      OfflineStore.cacheMessages(id, msgs);
       renderMessages(msgs);
-
-    }, function(err) {
-      // ── Firestore listener error handler ──────────────────
-      console.error('Firestore listener error:', err.code, err.message);
-      if (err.code === 'permission-denied') {
-        var banner = document.getElementById('offlineBanner');
-        banner.style.display = 'block';
-        banner.style.background = '#c0392b';
-        banner.innerHTML = '🔒 Firestore permission denied — update your security rules to allow read/write.';
-      } else {
-        var cached = OfflineStore.getCachedMessages(id);
-        if (cached.length) renderMessages(cached);
-      }
     });
-}
-
-// Show pending outbox messages with a "pending" indicator
-function renderOutboxPending(channelId) {
-  const outbox = OfflineStore.getOutbox().filter(function(o) { return o.channelId === channelId; });
-  if (!outbox.length) return;
-  const area = document.getElementById('messagesArea');
-  outbox.forEach(function(item) {
-    const pendingMsg = Object.assign({}, item.msg, { pending: true });
-    appendMessageEl(area, pendingMsg);
-  });
-  area.scrollTop = area.scrollHeight;
 }
 
 // RENDER MESSAGES
@@ -768,16 +461,13 @@ function clearUnreadMsgIdsForChannel() {
 
 function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   const isMine   = msg.sender === state.currentUser.name;
-  const isViaSms = !!msg.viaSms;
   const group    = document.createElement('div');
-  group.className = 'msg-group' + (isMine ? ' mine' : '') + (isViaSms ? ' sms-msg' : '');
+  group.className = 'msg-group' + (isMine ? ' mine' : '');
   if (msg.id) group.dataset.msgId = msg.id;
 
-  // Only show avatar for OTHER users — own messages have no avatar/spacer
-  const avatarInner = isViaSms ? '📱' : msg.sender[0].toUpperCase();
-  const avatarHtml  = !isMine
-    ? '<div class="msg-avatar' + (isViaSms ? ' sms-avatar' : '') + '" style="background:' + msg.color + '">' + avatarInner + '</div>'
-    : ''; // no spacer — bubble aligns right via flex-direction:row-reverse
+  const avatarHtml = !isMine
+    ? '<div class="msg-avatar" style="background:' + msg.color + '">' + msg.sender[0].toUpperCase() + '</div>'
+    : '';
 
   // Quote block
   let quoteHtml = '';
@@ -807,17 +497,7 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
     return '<span class="reaction-chip' + (reacted ? ' reacted' : '') + '" onclick="addReaction(\'' + msg.id + '\',\'' + r.emoji + '\')" title="' + (reacted ? 'Remove reaction' : 'Add reaction') + '">' + r.emoji + ' ' + r.count + '</span>';
   }).join('');
 
-  // SMS badge shown next to sender name
-  const smsBadge = isViaSms
-    ? '<span class="sms-badge">📱 SMS</span>'
-    : '';
-
-  // Pending badge for offline queued messages
-  const pendingBadge = msg.pending
-    ? '<span class="pending-badge">⏳ Pending</span>'
-    : '';
-
-  // Actions: SVG icons — elegant like Messenger
+  // Actions: SVG icons
   var svgReply  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>';
   var svgLike   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>';
   var svgHeart  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>';
@@ -825,10 +505,10 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   var svgEdit   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   var svgDelete = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
 
-  const quoteAction  = msg.id && !msg.pending
+  const quoteAction  = msg.id
     ? '<span class="ma-btn" onclick="quoteMessage(\'' + msg.id + '\')" title="Reply">' + svgReply + '</span>'
     : '';
-  const editAction   = isMine && msg.id && !msg.pending
+  const editAction   = isMine && msg.id
     ? '<span class="ma-btn" onclick="startEdit(\'' + msg.id + '\')" title="Edit">' + svgEdit + '</span>'
     : '';
   const deleteAction = isMine && msg.id
@@ -840,9 +520,9 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   if (!isMine) {
     var isUnread = msg.id && state.unreadMsgIds.has(msg.id);
     if (isUnread) {
-      senderHtml = '<strong class="sender-unread" id="sender-' + msg.id + '" onclick="markSenderRead(\'' + msg.id + '\',\'' + escapeHtml(msg.sender) + '\')" title="Click to mark as read">' + escapeHtml(msg.sender) + '</strong>' + smsBadge;
+      senderHtml = '<strong class="sender-unread" id="sender-' + msg.id + '" onclick="markSenderRead(\'' + msg.id + '\',\'' + escapeHtml(msg.sender) + '\')" title="Click to mark as read">' + escapeHtml(msg.sender) + '</strong>';
     } else {
-      senderHtml = '<strong>' + escapeHtml(msg.sender) + '</strong>' + smsBadge;
+      senderHtml = '<strong>' + escapeHtml(msg.sender) + '</strong>';
     }
   }
 
@@ -869,9 +549,8 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
         (isMine ? '' : senderHtml) +
         '<span>' + (msg.timestamp && msg.timestamp.toDate ? formatTime(msg.timestamp.toDate()) : msg.time) + '</span>' +
         editedTag +
-        pendingBadge +
       '</div>' +
-      '<div class="msg-bubble' + (isViaSms ? ' sms-bubble' : '') + (msg.pending ? ' pending-bubble' : '') + '" id="bubble-' + (msg.id || '') + '">' +
+      '<div class="msg-bubble" id="bubble-' + (msg.id || '') + '">' +
         content +
         '<div class="msg-actions">' +
           quoteAction +
@@ -931,7 +610,7 @@ async function sendMessage() {
   const msg = {
     sender:    state.currentUser.name,
     color:     state.currentUser.color,
-    text:      text,
+    text:      text,   // store raw — renderText() handles escaping + links on display
     time:      formatTime(new Date()),
     reactions: [],
   };
@@ -944,50 +623,9 @@ async function sendMessage() {
     cancelQuote();
   }
 
-  if (!isOnline()) {
-    const offlineMsg = Object.assign({}, msg, {
-      id:        'offline-' + Date.now(),
-      timestamp: { toDate: function() { return new Date(); } },
-      pending:   true,
-    });
-    OfflineStore.addToOutbox(state.currentChannel, msg);
-    OfflineStore.appendCachedMessage(state.currentChannel, offlineMsg);
-    const area = document.getElementById('messagesArea');
-    appendMessageEl(area, offlineMsg);
-    area.scrollTop = area.scrollHeight;
-    return;
-  }
-
-  // ── Optimistic UI: show message immediately before Firestore confirms ──
-  const optimisticMsg = Object.assign({}, msg, {
-    id:        'opt-' + Date.now(),
-    timestamp: { toDate: function() { return new Date(); } },
-    pending:   true,
-  });
-  const area = document.getElementById('messagesArea');
-  appendMessageEl(area, optimisticMsg);
-  area.scrollTop = area.scrollHeight;
-
-  try {
-    await db.collection('channels').doc(state.currentChannel).collection('messages').add(
-      Object.assign({}, msg, { timestamp: firebase.firestore.FieldValue.serverTimestamp() })
-    );
-    // Remove optimistic bubble — onSnapshot will render the real one
-    var optEl = document.querySelector('[data-msg-id="' + optimisticMsg.id + '"]');
-    if (optEl) optEl.remove();
-  } catch (err) {
-    // Show error on the optimistic bubble
-    var optEl = document.querySelector('[data-msg-id="' + optimisticMsg.id + '"]');
-    if (optEl) {
-      optEl.style.opacity = '0.5';
-      optEl.title = 'Failed to send: ' + err.message;
-    }
-    console.error('Send failed:', err);
-    // If permission denied, show helpful message
-    if (err.code === 'permission-denied') {
-      showSyncToast('⚠️ Permission denied — check Firestore rules');
-    }
-  }
+  await db.collection('channels').doc(state.currentChannel).collection('messages').add(
+    Object.assign({}, msg, { timestamp: firebase.firestore.FieldValue.serverTimestamp() })
+  );
 }
 
 function handleKey(e) {
@@ -1018,40 +656,6 @@ function autoResize(el) {
   const newHeight = Math.min(el.scrollHeight, 120);
   // If empty, let CSS/rows=1 handle the default height naturally
   el.style.height = (el.value === '' ? '' : newHeight + 'px');
-}
-
-// TYPING — send + receive
-function showTyping() {
-  if (!isOnline()) return;
-  clearTimeout(state.typingTimer);
-  const ref = db.collection('typing').doc(state.currentChannel);
-  ref.set({ [state.currentUser.name]: true }, { merge: true });
-  state.typingTimer = setTimeout(function() {
-    ref.set({ [state.currentUser.name]: false }, { merge: true });
-  }, 2000);
-}
-
-var _unsubscribeTyping = null;
-
-function subscribeTyping(channelId) {
-  if (_unsubscribeTyping) { _unsubscribeTyping(); _unsubscribeTyping = null; }
-  if (!isOnline()) return;
-  _unsubscribeTyping = db.collection('typing').doc(channelId)
-    .onSnapshot(function(snap) {
-      if (!snap.exists) { document.getElementById('typingIndicator').textContent = ''; return; }
-      var data = snap.data();
-      var typers = Object.keys(data).filter(function(name) {
-        return name !== state.currentUser.name && data[name] === true;
-      });
-      var el = document.getElementById('typingIndicator');
-      if (typers.length === 0) {
-        el.textContent = '';
-      } else if (typers.length === 1) {
-        el.textContent = typers[0] + ' is typing…';
-      } else {
-        el.textContent = typers.slice(0, 2).join(', ') + ' are typing…';
-      }
-    });
 }
 
 // REACTIONS — per-user toggle (tap again to remove)
@@ -1244,7 +848,6 @@ async function uploadPendingFile() {
   }
 
   // ── Upload to Firebase Storage in background ─────────────
-  document.getElementById('typingIndicator').textContent = 'Uploading…';
   try {
     const path = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
     const ref  = storage.ref(path);
@@ -1272,8 +875,6 @@ async function uploadPendingFile() {
     var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
     if (tempEl) tempEl.remove();
     alert('Upload failed: ' + err.message);
-  } finally {
-    document.getElementById('typingIndicator').textContent = '';
   }
 }
 
@@ -1387,61 +988,35 @@ function insertEmoji(emoji) {
 
 // SIDEBAR / MEMBERS
 function toggleSidebar() {
-  const isMobile = window.innerWidth <= 640;
+  const sidebar   = document.getElementById('sidebar');
+  const backdrop  = document.getElementById('sidebarBackdrop');
+  const isMobile  = window.innerWidth <= 640;
+
   if (isMobile) {
-    // On mobile: hamburger = back button — go back to conversation list
-    closeSidebarMobile();
+    const isOpen = sidebar.classList.contains('mobile-open');
+    sidebar.classList.toggle('mobile-open', !isOpen);
+    backdrop.classList.toggle('show', !isOpen);
   } else {
-    document.getElementById('sidebar').classList.toggle('collapsed');
+    sidebar.classList.toggle('collapsed');
   }
 }
 
 function closeSidebarMobile() {
-  document.body.classList.remove('chat-open');
-  // Update hamburger to show app icon / menu (not back arrow)
-  updateHamburgerIcon(false);
-}
-
-// Mobile: handle browser back button to return to conversation list
-window.addEventListener('popstate', function() {
-  if (window.innerWidth <= 640 && document.body.classList.contains('chat-open')) {
-    closeSidebarMobile();
-  }
-});
-
-// Push a history state when opening a chat on mobile so back button works
-function openChatMobile() {
-  document.body.classList.add('chat-open');
-  updateHamburgerIcon(true);
-  // Push state so browser back button works
-  if (window.innerWidth <= 640) {
-    history.pushState({ chatOpen: true }, '');
-  }
-}
-
-function updateHamburgerIcon(isChatOpen) {
-  var btn = document.querySelector('.hamburger');
-  if (!btn) return;
-  if (window.innerWidth > 640) return;
-  btn.textContent = isChatOpen ? '←' : '☰';
-  btn.title = isChatOpen ? 'Back to chats' : 'Menu';
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebarBackdrop').classList.remove('show');
 }
 
 // Close sidebar when a channel is tapped on mobile
 function loadChannelAndCloseSidebar(id, title, desc) {
+  if (window.innerWidth <= 640) closeSidebarMobile();
   loadChannel(id, title, desc);
-  if (window.innerWidth <= 640) {
-    openChatMobile();
-  }
 }
 
 function toggleMembers()  { document.getElementById('membersPanel').classList.toggle('open'); }
 
 function filterChannels(val) {
   renderChannels(val);
-  db.collection('users').orderBy('name').get().then(function(snap) {
-    renderDMs(snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); }), val);
-  });
+  renderDMs(_lastKnownUsers, val);
 }
 
 // ============================================================
@@ -1525,11 +1100,6 @@ async function ctxRemoveMember() {
 
   if (!confirm(confirmMsg)) return;
 
-  if (!isOnline()) {
-    alert('This action requires an internet connection.');
-    return;
-  }
-
   try {
     // 1. Delete all messages by this user across all channels
     const allChannelIds = channels.map(function(c) { return c.id; });
@@ -1554,11 +1124,6 @@ async function ctxRemoveMember() {
       const batch = db.batch();
       msgsSnap.docs.forEach(function(d) { batch.delete(d.ref); });
       if (!msgsSnap.empty) await batch.commit();
-
-      // Clear local cache for this channel
-      const cached = OfflineStore.getCachedMessages(chId);
-      const filtered = cached.filter(function(m) { return m.sender !== u.name; });
-      OfflineStore.cacheMessages(chId, filtered);
     }
 
     // 2. Delete the user document from Firestore
@@ -1566,20 +1131,15 @@ async function ctxRemoveMember() {
       await db.collection('users').doc(u.id).delete();
     }
 
-    // 3. Remove from local cache
-    OfflineStore.removeCachedUser(u.id);
-
-    // 4. If removing self — log out
+    // 3. If removing self — log out
     if (isSelf) {
       sessionStorage.removeItem('teamsUser');
       window.location.href = 'index.html';
       return;
     }
 
-    // 5. Re-render messages if current channel had their messages
+    // 4. Re-render messages if current channel had their messages
     loadChannel(state.currentChannel);
-
-    showSyncToast('✓ ' + u.name + ' removed and history cleared.');
 
   } catch (err) {
     alert('Error: ' + err.message);
@@ -1732,14 +1292,12 @@ async function saveSettings() {
   document.getElementById('myName').textContent = state.currentUser.name;
   document.getElementById('myAvatarInitial').textContent = state.currentUser.name[0].toUpperCase();
   sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
-  if (state.currentUser.id && isOnline()) {
+  if (state.currentUser.id) {
     await db.collection('users').doc(state.currentUser.id).update({
       status: status,
       name: state.currentUser.name,
     }).catch(function() {});
   }
-  // Always update local cache
-  OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
   document.getElementById('settingsSaveMsg').textContent = 'Saved ✓';
   setTimeout(function() {
     document.getElementById('settingsSaveMsg').textContent = '';
@@ -1778,8 +1336,8 @@ function previewAvatar(input) {
   };
   reader.readAsDataURL(file);
 
-  // Upload to Firebase Storage if online
-  if (isOnline() && state.currentUser.id) {
+  // Upload to Firebase Storage
+  if (state.currentUser.id) {
     const path = 'avatars/' + state.currentUser.id + '_' + Date.now();
     const ref  = storage.ref(path);
     ref.put(file).then(function() {
@@ -1787,8 +1345,6 @@ function previewAvatar(input) {
     }).then(function(url) {
       state.currentUser.avatarUrl = url;
       sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
-      OfflineStore.upsertCachedUser(Object.assign({}, state.currentUser));
-      // Persist to Firestore
       db.collection('users').doc(state.currentUser.id).update({ avatarUrl: url }).catch(function() {});
     }).catch(function(err) {
       console.warn('Avatar upload failed:', err.message);
@@ -1799,8 +1355,6 @@ function previewAvatar(input) {
 // LOGOUT
 async function logout() {
   await markOffline();
-  stopSmsPoll();
-  if (_unsubscribeTyping) { _unsubscribeTyping(); _unsubscribeTyping = null; }
   state.unsubscribeNotifs.forEach(function(u) { u(); });
   state.unsubscribeNotifs = [];
   if (state.unsubscribeMessages) { state.unsubscribeMessages(); state.unsubscribeMessages = null; }
@@ -1810,7 +1364,7 @@ async function logout() {
 }
 
 async function markOffline() {
-  if (state.currentUser.id && isOnline()) {
+  if (state.currentUser.id) {
     await db.collection('users').doc(state.currentUser.id).update({ status: 'offline' }).catch(function() {});
   }
 }
@@ -1853,41 +1407,31 @@ function linkify(escapedText) {
 
 // Escape HTML then convert newlines and linkify
 function renderText(str) {
-  if (!str) return '';
-  // Detect if text is already HTML-escaped (legacy messages stored with escapeHtml)
-  // by checking for common escape sequences — if found, don't double-escape
-  var alreadyEscaped = /&amp;|&lt;|&gt;/.test(str);
-  var escaped = alreadyEscaped ? str : escapeHtml(str);
+  var escaped = escapeHtml(str);
   // Convert newlines to <br>
   escaped = escaped.replace(/\n/g, '<br>');
   // Make URLs clickable
   return linkify(escaped);
 }
 
-// Get a user's color from cache (for seen avatars)
+// Get a user's color (for seen avatars)
 function getUserColor(name) {
-  var users = OfflineStore.getCachedUsers();
-  var u = users.find(function(u) { return u.name === name; });
+  var u = _lastKnownUsers.find(function(u) { return u.name === name; });
   return u ? u.color : '#6264a7';
 }
 
-// Mark this channel as seen by current user — writes to the last message's seenBy field
+// Mark this channel as seen by current user
 function markChannelSeen(channelId, msgs) {
-  if (!isOnline() || !msgs || msgs.length === 0) return;
-  // Find the last message NOT sent by current user (or any message)
+  if (!msgs || msgs.length === 0) return;
   var lastMsg = null;
   for (var i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].id && !msgs[i].id.startsWith('offline-')) {
-      lastMsg = msgs[i];
-      break;
-    }
+    if (msgs[i].id) { lastMsg = msgs[i]; break; }
   }
   if (!lastMsg || !lastMsg.id) return;
-  // Only mark seen on messages from others
   if (lastMsg.sender === state.currentUser.name) return;
 
   var seenBy = lastMsg.seenBy || {};
-  if (seenBy[state.currentUser.name]) return; // already marked
+  if (seenBy[state.currentUser.name]) return;
 
   var update = {};
   update['seenBy.' + state.currentUser.name] = firebase.firestore.FieldValue.serverTimestamp();
@@ -2075,82 +1619,12 @@ function statusColor(s) {
   return { online: '#2ecc71', away: '#f1c40f', busy: '#e74c3c', offline: '#95a5a6' }[s] || '#95a5a6';
 }
 
-// ── SMS INBOX PANEL ──────────────────────────────────────────
-function toggleSmsInbox() {
-  const panel = document.getElementById('smsInboxPanel');
-  panel.classList.toggle('open');
-  if (panel.classList.contains('open')) renderSmsInboxPanel();
-}
-
-function renderSmsInboxPanel() {
-  const list   = document.getElementById('smsInboxList');
-  const inbox  = OfflineStore.getSmsInbox();
-  const count  = document.getElementById('smsInboxCount');
-
-  if (!inbox.length) {
-    list.innerHTML = '<div style="text-align:center;color:#aaa;padding:30px;font-size:13px;">No SMS messages yet.<br>Start the SMS bridge server<br>and send a text to your phone.</div>';
-    if (count) { count.style.display = 'none'; }
-    return;
-  }
-
-  if (count) {
-    count.textContent = inbox.length;
-    count.style.display = 'inline-block';
-  }
-
-  list.innerHTML = '';
-  // Show newest first
-  inbox.slice().reverse().forEach(function(item) {
-    const div = document.createElement('div');
-    div.className = 'sms-inbox-item';
-    const time = new Date(item.receivedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    div.innerHTML =
-      '<div class="sms-inbox-from">📱 ' + escapeHtml(item.msg.smsFrom || 'Unknown') + '</div>' +
-      '<div class="sms-inbox-text">' + escapeHtml(item.msg.text || '') + '</div>' +
-      '<div class="sms-inbox-meta">' + time + ' → #' + escapeHtml(item.channelId) + '</div>';
-    div.onclick = function() {
-      loadChannel(item.channelId);
-      toggleSmsInbox();
-    };
-    list.appendChild(div);
-  });
-}
-
-function clearSmsInboxPanel() {
-  if (!confirm('Clear all SMS inbox messages?')) return;
-  OfflineStore.clearSmsInbox();
-  localStorage.setItem('pc_seen_sms', '[]');
-  renderSmsInboxPanel();
-  const count = document.getElementById('smsInboxCount');
-  if (count) count.style.display = 'none';
-}
-
-// Update SMS inbox badge count
-function updateSmsInboxBadge() {
-  const inbox = OfflineStore.getSmsInbox();
-  const count = document.getElementById('smsInboxCount');
-  if (!count) return;
-  if (inbox.length > 0) {
-    count.textContent    = inbox.length;
-    count.style.display  = 'inline-block';
-  } else {
-    count.style.display  = 'none';
-  }
-}
-
 // Call on load
 document.addEventListener('DOMContentLoaded', function() {
-  setTimeout(updateSmsInboxBadge, 500);
   checkNotificationPermission();
   updateFavicon(false);
 
-  // Mobile: start on the conversation list (sidebar), not the chat
-  if (window.innerWidth <= 640) {
-    document.body.classList.remove('chat-open');
-    updateHamburgerIcon(false);
-  }
-
-  // ── Mobile keyboard fix ──────────────────────────────────
+  // Mobile keyboard fix — scroll input into view when virtual keyboard opens
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function() {
       var inputBar = document.getElementById('msgInput');
@@ -2312,76 +1786,76 @@ function cancelEdit(msgId) {
 
 // ── NOTIFICATIONS ──────────────────────────────────────────
 
-// Subscribe lightweight listeners on all channels for cross-channel notifications
+// Subscribe a SINGLE collection-group listener for cross-channel notifications.
+// This replaces the old approach of one listener per channel, which was burning
+// through Firestore read quota (N channels × N DMs = dozens of open listeners).
 function startNotifListeners() {
   // Tear down old listeners
   state.unsubscribeNotifs.forEach(function(unsub) { unsub(); });
   state.unsubscribeNotifs = [];
 
-  if (!isOnline()) return;
-
-  // Build full list: group channels + DM channels from cached users
-  var allChannelIds = channels.map(function(ch) {
-    return { id: ch.id, label: ch.label || ('#' + ch.id) };
-  });
-
-  // Add DM channels for every known user
-  var cachedUsers = OfflineStore.getCachedUsers();
-  cachedUsers.forEach(function(u) {
+  // Build a label lookup so we can show the channel name in notifications
+  var labelMap = {};
+  channels.forEach(function(ch) { labelMap[ch.id] = ch.label || ('#' + ch.id); });
+  _lastKnownUsers.forEach(function(u) {
     if (u.name === state.currentUser.name) return;
     var dmId = dmChannelId(state.currentUser.name, u.name);
-    allChannelIds.push({ id: dmId, label: u.name });
+    labelMap[dmId] = u.name;
   });
 
-  allChannelIds.forEach(function(ch) {
-    // Skip the current channel — its main listener already handles it
-    if (ch.id === state.currentChannel) return;
+  // One collection-group query across ALL "messages" sub-collections.
+  // We only look at messages newer than "now" so we don't re-read history.
+  var listenFrom = firebase.firestore.Timestamp.now();
 
-    var unsub = db.collection('channels').doc(ch.id).collection('messages')
-      .orderBy('timestamp')
-      .limitToLast(1)
-      .onSnapshot(function(snap) {
-        if (snap.empty) return;
-        var doc = snap.docs[0];
+  var unsub = db.collectionGroup('messages')
+    .where('timestamp', '>', listenFrom)
+    .orderBy('timestamp')
+    .onSnapshot(function(snap) {
+      snap.docChanges().forEach(function(change) {
+        if (change.type !== 'added') return;
+
+        var doc = change.doc;
         var m   = Object.assign({ id: doc.id }, doc.data());
 
         // Skip own messages
         if (m.sender === state.currentUser.name) return;
 
-        // Use notifCount to detect truly new messages (not initial load)
-        var key = 'notif_' + ch.id;
-        var seenId = state.notifCount[key];
-        if (seenId === undefined) {
-          // First snapshot — just record, don't notify
-          state.notifCount[key] = m.id;
-          return;
-        }
-        if (seenId === m.id) return;
-        state.notifCount[key] = m.id;
+        // Derive the channel ID from the document path:
+        // channels/{channelId}/messages/{msgId}
+        var pathParts = doc.ref.path.split('/');
+        var chId = pathParts[1]; // index 1 = channelId
 
-        // New message — update unread state
-        state.unread[ch.id] = (state.unread[ch.id] || 0) + 1;
-        if (!state.unreadSenders[ch.id]) state.unreadSenders[ch.id] = new Set();
-        state.unreadSenders[ch.id].add(m.sender);
-        state.lastSender[ch.id] = m.sender;
-        // Record activity time for DM sort order
-        state.dmLastActivity[ch.id] = Date.now();
+        // Skip the currently open channel — its main listener handles it
+        if (chId === state.currentChannel) return;
+
+        // Update unread state
+        state.unread[chId] = (state.unread[chId] || 0) + 1;
+        if (!state.unreadSenders[chId]) state.unreadSenders[chId] = new Set();
+        state.unreadSenders[chId].add(m.sender);
+        state.lastSender[chId] = m.sender;
+        if (chId.startsWith('dm-')) state.dmLastActivity[chId] = Date.now();
 
         renderChannels();
         renderDMsFromCache();
         updateTabTitle();
         updateFavicon(true);
 
+        var chLabel = labelMap[chId] || ('#' + chId);
         var cleanText = (m.text || '')
           .replace(/<br\s*\/?>/gi, ' ')
           .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
           .slice(0, 100);
 
-        showBrowserNotification(m.sender + ' · ' + ch.label, cleanText, ch.id);
+        showBrowserNotification(m.sender + ' · ' + chLabel, cleanText, chId);
       });
+    }, function(err) {
+      // Collection-group queries require a Firestore index.
+      // If the index doesn't exist yet, fall back silently — notifications
+      // will still work for the active channel via its own listener.
+      console.warn('Notif listener error (index may be missing):', err.message);
+    });
 
-    state.unsubscribeNotifs.push(unsub);
-  });
+  state.unsubscribeNotifs.push(unsub);
 }
 
 function checkNotificationPermission() {

@@ -56,11 +56,6 @@
 <!-- MAIN AREA -->
 <div class="main">
 
-  <!-- Offline Banner -->
-  <div class="offline-banner" id="offlineBanner" style="display:none">
-    📡 You are offline — messages will sync when reconnected
-  </div>
-
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
@@ -73,7 +68,6 @@
       <button class="icon-btn" onclick="toggleConvSearch()" title="Search conversation">🔍 <span class="btn-label">Search</span></button>
       <button class="icon-btn" onclick="toggleMembers()" title="Members">👥 <span class="btn-label">Members</span></button>
       <button class="icon-btn" onclick="openVideoCall()" title="Video Call">📹 <span class="btn-label">Call</span></button>
-      <button class="icon-btn sms-inbox-btn" id="smsInboxBtn" onclick="toggleSmsInbox()" title="SMS Inbox">📱 <span class="btn-label">SMS</span> <span id="smsInboxCount" class="sms-inbox-count" style="display:none">0</span></button>
     </div>
   </div>
 
@@ -88,9 +82,6 @@
 
   <!-- Messages Area -->
   <div class="messages-area" id="messagesArea"></div>
-
-  <!-- Typing Indicator -->
-  <div class="typing-indicator" id="typingIndicator"></div>
 
   <!-- File Preview (shown before sending) -->
   <div class="file-preview-bar" id="filePreviewBar" style="display:none">
@@ -116,7 +107,7 @@
     <!-- Text input -->
     <div class="input-wrapper">
       <textarea id="msgInput" placeholder="Aa" rows="1"
-        onkeydown="handleKey(event)" oninput="autoResize(this); showTyping()"></textarea>
+        onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
     </div>
 
     <!-- New line (mobile only) -->
@@ -265,25 +256,11 @@
   <div class="ctx-item danger" id="memberCtxRemove" onclick="ctxRemoveMember()">🗑️ Remove User &amp; Clear History</div>
 </div>
 
-<!-- SMS INBOX PANEL -->
-<div class="sms-inbox-panel" id="smsInboxPanel">
-  <div class="members-header">
-    <span>📱 SMS Inbox</span>
-    <span class="close-btn" onclick="toggleSmsInbox()">✕</span>
-  </div>
-  <div class="sms-inbox-subtitle">Messages received via SMS bridge</div>
-  <div id="smsInboxList" style="overflow-y:auto;flex:1;"></div>
-  <div class="sms-inbox-footer">
-    <button onclick="clearSmsInboxPanel()" class="sms-clear-btn">🗑️ Clear Inbox</button>
-  </div>
-</div>
-
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="offline-store.js"></script>
 <script src="teams.js"></script>
 </body>
 </html>

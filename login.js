@@ -6,9 +6,6 @@ function getColor(name) {
   return palette[Math.abs(hash) % palette.length];
 }
 
-// ── NETWORK CHECK ──
-function isOnline() { return navigator.onLine; }
-
 // ── TABS ──
 function showTab(tab) {
   document.getElementById('loginTab').classList.toggle('active', tab === 'login');
@@ -28,26 +25,6 @@ async function handleLogin(e) {
 
   if (!name || !pass) { errEl.textContent = 'Please enter username and password.'; return; }
 
-  // ── OFFLINE LOGIN ──────────────────────────────────────
-  if (!isOnline()) {
-    const cached = OfflineStore.getCachedUser(name.toLowerCase());
-    if (!cached) {
-      errEl.textContent = '📡 Offline — this account has never signed in on this device.';
-      return;
-    }
-    if (cached.password !== pass) {
-      errEl.textContent = 'Wrong password.';
-      return;
-    }
-    sessionStorage.setItem('teamsUser', JSON.stringify({
-      id: cached.id, name: cached.name, color: cached.color,
-      status: 'offline', isOfflineSession: true,
-    }));
-    window.location.href = 'teams.html';
-    return;
-  }
-
-  // ── ONLINE LOGIN ───────────────────────────────────────
   errEl.textContent = 'Signing in...';
   try {
     const snap = await db.collection('users')
@@ -61,12 +38,6 @@ async function handleLogin(e) {
 
     if (user.password !== pass) { errEl.textContent = 'Wrong password.'; return; }
 
-    // Cache user locally for future offline logins
-    OfflineStore.upsertCachedUser({
-      id: doc.id, name: user.name, nameLower: user.nameLower,
-      password: pass, color: user.color, status: 'online',
-    });
-
     await doc.ref.update({ status: 'online' }).catch(function() {});
 
     sessionStorage.setItem('teamsUser', JSON.stringify({
@@ -76,22 +47,11 @@ async function handleLogin(e) {
 
   } catch (err) {
     console.error('Login error:', err);
-    // Firestore permission error — rules may have expired
     if (err.code === 'permission-denied') {
-      errEl.textContent = '⚠️ Database permission denied. Please update Firestore security rules to allow read/write.';
+      errEl.textContent = '⚠️ Database permission denied. Please update Firestore security rules.';
       return;
     }
-    // Try offline fallback
-    const cached = OfflineStore.getCachedUser(name.toLowerCase());
-    if (cached && cached.password === pass) {
-      sessionStorage.setItem('teamsUser', JSON.stringify({
-        id: cached.id, name: cached.name, color: cached.color,
-        status: 'offline', isOfflineSession: true,
-      }));
-      window.location.href = 'teams.html';
-    } else {
-      errEl.textContent = 'Error: ' + err.message;
-    }
+    errEl.textContent = 'Error: ' + err.message;
   }
 }
 
@@ -106,11 +66,6 @@ async function handleRegister(e) {
   if (pass !== confirm) { errEl.textContent = 'Passwords do not match.'; return; }
   if (pass.length < 4)  { errEl.textContent = 'Password must be at least 4 characters.'; return; }
 
-  if (!isOnline()) {
-    errEl.textContent = '📡 Registration requires an internet connection.';
-    return;
-  }
-
   errEl.textContent = 'Creating account...';
 
   try {
@@ -124,12 +79,6 @@ async function handleRegister(e) {
       password: pass, color, status: 'online',
     });
 
-    // Cache for offline use
-    OfflineStore.upsertCachedUser({
-      id: ref.id, name, nameLower: name.toLowerCase(),
-      password: pass, color, status: 'online',
-    });
-
     sessionStorage.setItem('teamsUser', JSON.stringify({
       id: ref.id, name, color, status: 'online',
     }));
@@ -140,48 +89,22 @@ async function handleRegister(e) {
   }
 }
 
-// ── NETWORK STATUS INDICATOR ──
-function updateNetworkBadge() {
-  const badge = document.getElementById('networkBadge');
-  if (!badge) return;
-  if (isOnline()) {
-    badge.textContent  = '🟢 Online';
-    badge.className    = 'network-badge online';
-  } else {
-    badge.textContent  = '🔴 Offline mode';
-    badge.className    = 'network-badge offline';
-  }
-}
-
 // ── INIT ──
 document.addEventListener('DOMContentLoaded', () => {
-  updateNetworkBadge();
-  window.addEventListener('online',  updateNetworkBadge);
-  window.addEventListener('offline', updateNetworkBadge);
-
-  // Seed default users if collection is empty (online only)
-  if (isOnline()) {
-    db.collection('users').limit(1).get().then(snap => {
-      if (snap.empty) {
-        const defaults = [
-          { name: 'Mark',    password: 'mark123',  color: '#0e7c63' },
-          { name: 'Ces',     password: 'ces123',   color: '#8e44ad' },
-          { name: 'Admin',   password: 'admin123', color: '#e67e22' },
-          { name: 'Mark T.', password: 'markt123', color: '#2980b9' },
-        ];
-        defaults.forEach(u => {
-          db.collection('users').add({
-            ...u, nameLower: u.name.toLowerCase(), status: 'offline',
-          }).then(ref => {
-            OfflineStore.upsertCachedUser({ id: ref.id, ...u, nameLower: u.name.toLowerCase() });
-          });
+  // Seed default users if collection is empty
+  db.collection('users').limit(1).get().then(snap => {
+    if (snap.empty) {
+      const defaults = [
+        { name: 'Mark',    password: 'mark123',  color: '#0e7c63' },
+        { name: 'Ces',     password: 'ces123',   color: '#8e44ad' },
+        { name: 'Admin',   password: 'admin123', color: '#e67e22' },
+        { name: 'Mark T.', password: 'markt123', color: '#2980b9' },
+      ];
+      defaults.forEach(u => {
+        db.collection('users').add({
+          ...u, nameLower: u.name.toLowerCase(), status: 'offline',
         });
-      } else {
-        // Cache all existing users for offline login
-        db.collection('users').get().then(all => {
-          all.docs.forEach(d => OfflineStore.upsertCachedUser({ id: d.id, ...d.data() }));
-        });
-      }
-    }).catch(() => {});
-  }
+      });
+    }
+  }).catch(() => {});
 });
