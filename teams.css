@@ -57,6 +57,19 @@ body {
 
 .logo { width: 28px; height: 28px; border-radius: 6px; }
 
+/* Close button inside sidebar header — only shown on mobile */
+.sidebar-close-btn {
+  display: none;
+  margin-left: auto;
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-close-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-light); }
 .app-name {
   font-size: 15px;
   font-weight: 600;
@@ -224,8 +237,9 @@ body {
 .topbar-left { display: flex; align-items: center; gap: 8px; }
 .topbar-right { display: flex; gap: 6px; }
 
-.hamburger { font-size: 18px; cursor: pointer; padding: 4px 6px; border-radius: 4px; color: var(--text-light); }
+.hamburger { display: flex; align-items: center; cursor: pointer; padding: 4px 6px; border-radius: 4px; color: var(--text-light); font-size: 20px; line-height: 1; }
 .hamburger:hover { background: rgba(255,255,255,0.1); }
+.hamburger svg { transition: transform 0.2s ease; }
 
 .channel-title { font-size: 14px; font-weight: 600; color: var(--text-light); }
 .channel-desc { font-size: 11px; color: var(--text-muted); }
@@ -1209,18 +1223,18 @@ body {
     overflow: hidden;
   }
 
-  /* ── Sidebar: slide-in drawer ── */
+  /* ── Sidebar: full-screen drawer (like Messenger) ── */
   .sidebar {
     position: fixed;
     top: 0; left: 0;
     height: 100%;
-    width: 78vw;
-    max-width: 280px;
+    width: 100%;
+    max-width: 100%;
     min-width: unset;
     z-index: 9000;
     transform: translateX(-100%);
     transition: transform 0.25s ease;
-    box-shadow: 4px 0 20px rgba(0,0,0,0.7);
+    box-shadow: none;
     overflow-y: auto;
   }
 
@@ -1236,6 +1250,7 @@ body {
   .sidebar-backdrop.show { display: block; }
 
   .sidebar-header { padding: 8px 10px; }
+  .sidebar-close-btn { display: flex; align-items: center; }
   .app-name { font-size: 13px; }
   .sidebar-profile { padding: 6px 10px; }
   .section-label { padding: 4px 10px 2px; font-size: 10px; }
@@ -1251,7 +1266,7 @@ body {
 
   .topbar-left { gap: 4px; }
   .topbar-right { gap: 1px; }
-  .hamburger { font-size: 18px; padding: 3px 5px; }
+  .hamburger { padding: 3px 5px; }
   .channel-title { font-size: 12px; }
   .channel-desc { display: none !important; }
 

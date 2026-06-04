@@ -261,16 +261,27 @@ function startDmWith(userName) {
 }
 
 // Seed DM activity timestamps so sort order is correct on load.
+// Queries Firestore once per user pair to detect existing conversations.
 function seedDmActivityFromCache(users) {
   if (!users) users = _lastKnownUsers;
   users.forEach(function(u) {
     if (u.name === state.currentUser.name) return;
     var dmId = dmChannelId(state.currentUser.name, u.name);
-    if (!state.dmLastActivity[dmId]) {
-      state.dmLastActivity[dmId] = 0;
-    }
+    if (state.dmLastActivity[dmId]) return; // already set this session
+
+    // Check Firestore for at least one message in this DM channel
+    db.collection('channels').doc(dmId).collection('messages')
+      .orderBy('timestamp', 'desc').limit(1).get()
+      .then(function(snap) {
+        if (!snap.empty) {
+          var ts = snap.docs[0].data().timestamp;
+          state.dmLastActivity[dmId] = ts && ts.toDate
+            ? ts.toDate().getTime()
+            : Date.now();
+          renderDMsFromCache();
+        }
+      }).catch(function() {});
   });
-  renderDMsFromCache();
 }
 
 function dmChannelId(a, b) {
@@ -598,9 +609,12 @@ async function sendMessage() {
   const input = document.getElementById('msgInput');
   const text  = input.value.trim();
 
-  // If there's a pending file, upload it (with or without text)
+  // If there's a file pending, upload it — caption text is included in the same message
   if (_pendingFile) {
-    await uploadPendingFile();
+    input.value = '';
+    autoResize(input);
+    await uploadPendingFile(text);
+    return;
   }
 
   if (!text) return;
@@ -610,12 +624,11 @@ async function sendMessage() {
   const msg = {
     sender:    state.currentUser.name,
     color:     state.currentUser.color,
-    text:      text,   // store raw — renderText() handles escaping + links on display
+    text:      text,
     time:      formatTime(new Date()),
     reactions: [],
   };
 
-  // Attach quote if set
   if (state.quoteMsg) {
     msg.quoteId     = state.quoteMsg.id || '';
     msg.quoteSender = state.quoteMsg.sender || '';
@@ -797,81 +810,87 @@ function formatFileSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
-async function uploadPendingFile() {
+async function uploadPendingFile(caption) {
   if (!_pendingFile) return;
   const file = _pendingFile;
   const isImage = file.type.startsWith('image/');
+  caption = caption || '';
   cancelFileAttach();
 
-  // ── Show immediately in UI using local data URL ──────────
-  const area = document.getElementById('messagesArea');
+  // Show a temp message immediately in the UI
+  const area   = document.getElementById('messagesArea');
   const tempId = 'temp-' + Date.now();
 
   if (isImage) {
-    // Read file locally and show right away
     const reader = new FileReader();
     reader.onload = function(e) {
       const tempMsg = {
         id:        tempId,
         sender:    state.currentUser.name,
         color:     state.currentUser.color,
-        text:      '',
+        text:      caption,
         file:      file.name,
-        fileUrl:   e.target.result,  // local blob URL
+        fileUrl:   e.target.result,
         fileType:  file.type,
         time:      formatTime(new Date()),
         timestamp: { toDate: function() { return new Date(); } },
         reactions: [],
-        pending:   true,
       };
       appendMessageEl(area, tempMsg);
       area.scrollTop = area.scrollHeight;
     };
     reader.readAsDataURL(file);
   } else {
-    // Non-image: show pending chip immediately
     const tempMsg = {
       id:        tempId,
       sender:    state.currentUser.name,
       color:     state.currentUser.color,
-      text:      '',
+      text:      caption,
       file:      file.name,
       fileUrl:   null,
       fileType:  file.type,
       time:      formatTime(new Date()),
       timestamp: { toDate: function() { return new Date(); } },
       reactions: [],
-      pending:   true,
     };
     appendMessageEl(area, tempMsg);
     area.scrollTop = area.scrollHeight;
   }
 
-  // ── Upload to Firebase Storage in background ─────────────
+  // Upload to Firebase Storage
   try {
     const path = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
     const ref  = storage.ref(path);
     await ref.put(file);
     const url  = await ref.getDownloadURL();
 
-    // Remove the temp message from UI
+    // Remove temp message — onSnapshot will render the real one
     var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
     if (tempEl) tempEl.remove();
 
-    // Write real message to Firestore — onSnapshot will render it
-    await db.collection('channels').doc(state.currentChannel).collection('messages').add({
+    // Build message — include caption and quote if set
+    var firestoreMsg = {
       sender:    state.currentUser.name,
       color:     state.currentUser.color,
-      text:      '',
+      text:      caption,
       file:      file.name,
       fileUrl:   url,
       fileType:  file.type,
       time:      formatTime(new Date()),
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       reactions: [],
-    });
+    };
+
+    if (state.quoteMsg) {
+      firestoreMsg.quoteId     = state.quoteMsg.id || '';
+      firestoreMsg.quoteSender = state.quoteMsg.sender || '';
+      firestoreMsg.quoteText   = (state.quoteMsg.text || '').slice(0, 200);
+      cancelQuote();
+    }
+
+    await db.collection('channels').doc(state.currentChannel).collection('messages').add(firestoreMsg);
+
   } catch (err) {
-    // Remove temp and show error
     var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
     if (tempEl) tempEl.remove();
     alert('Upload failed: ' + err.message);
@@ -987,15 +1006,22 @@ function insertEmoji(emoji) {
 }
 
 // SIDEBAR / MEMBERS
+function setSidebarIconState(isOpen) {
+  var btn = document.getElementById('hamburgerBtn');
+  if (!btn) return;
+  btn.textContent = isOpen ? '←' : '☰';
+}
+
 function toggleSidebar() {
-  const sidebar   = document.getElementById('sidebar');
-  const backdrop  = document.getElementById('sidebarBackdrop');
-  const isMobile  = window.innerWidth <= 640;
+  const sidebar  = document.getElementById('sidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  const isMobile = window.innerWidth <= 640;
 
   if (isMobile) {
     const isOpen = sidebar.classList.contains('mobile-open');
     sidebar.classList.toggle('mobile-open', !isOpen);
     backdrop.classList.toggle('show', !isOpen);
+    setSidebarIconState(!isOpen);
   } else {
     sidebar.classList.toggle('collapsed');
   }
@@ -1004,6 +1030,7 @@ function toggleSidebar() {
 function closeSidebarMobile() {
   document.getElementById('sidebar').classList.remove('mobile-open');
   document.getElementById('sidebarBackdrop').classList.remove('show');
+  setSidebarIconState(false);
 }
 
 // Close sidebar when a channel is tapped on mobile

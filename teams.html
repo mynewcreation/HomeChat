@@ -20,6 +20,7 @@
   <div class="sidebar-header">
     <img src="M-LOGO.png" alt="Logo" class="logo" onerror="this.style.display='none'">
     <span class="app-name">MyHome Connect</span>
+    <span class="sidebar-close-btn" id="sidebarCloseBtn" onclick="closeSidebarMobile()" title="Back">✕</span>
   </div>
 
   <!-- Current User Profile (below title) -->
@@ -59,7 +60,7 @@
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <span class="hamburger" onclick="toggleSidebar()">☰</span>
+      <span class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()">&#9776;</span>
       <span class="channel-title" id="channelTitle"># general</span>
       <span class="channel-desc" id="channelDesc">General discussion</span>
     </div>
