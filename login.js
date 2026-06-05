@@ -91,20 +91,5 @@ async function handleRegister(e) {
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded', () => {
-  // Seed default users if collection is empty
-  db.collection('users').limit(1).get().then(snap => {
-    if (snap.empty) {
-      const defaults = [
-        { name: 'Mark',    password: 'mark123',  color: '#0e7c63' },
-        { name: 'Ces',     password: 'ces123',   color: '#8e44ad' },
-        { name: 'Admin',   password: 'admin123', color: '#e67e22' },
-        { name: 'Mark T.', password: 'markt123', color: '#2980b9' },
-      ];
-      defaults.forEach(u => {
-        db.collection('users').add({
-          ...u, nameLower: u.name.toLowerCase(), status: 'offline',
-        });
-      });
-    }
-  }).catch(() => {});
+  // Nothing to initialize on load
 });

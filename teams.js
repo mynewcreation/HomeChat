@@ -62,6 +62,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Users listener
   state.unsubscribeUsers = db.collection('users').orderBy('name')
     .onSnapshot(function(snap) {
+      // Handle removals immediately — remove from _lastKnownUsers right away
+      snap.docChanges().forEach(function(change) {
+        if (change.type === 'removed') {
+          _lastKnownUsers = _lastKnownUsers.filter(function(u) {
+            return u.id !== change.doc.id;
+          });
+        }
+      });
       const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       _lastKnownUsers = users;
       renderDMs(users);
@@ -490,6 +498,8 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   }
 
   let content = quoteHtml + (msg.text ? renderText(msg.text) : '');
+  // If emoji-only, mark the bubble so CSS can remove the background
+  const emojiOnly = msg.text && !msg.quoteText && !msg.fileUrl && !msg.file && isEmojiOnly(msg.text);
   if (msg.fileUrl) {
     if (msg.fileType && msg.fileType.startsWith('image/')) {
       content += '<div class="msg-image"><img src="' + msg.fileUrl + '" alt="' + msg.file + '" onclick="window.open(\'' + msg.fileUrl + '\',\'_blank\')"></div>';
@@ -561,7 +571,7 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
         '<span>' + (msg.timestamp && msg.timestamp.toDate ? formatTime(msg.timestamp.toDate()) : msg.time) + '</span>' +
         editedTag +
       '</div>' +
-      '<div class="msg-bubble" id="bubble-' + (msg.id || '') + '">' +
+      '<div class="msg-bubble' + (emojiOnly ? ' emoji-bubble' : '') + '" id="bubble-' + (msg.id || '') + '">' +
         content +
         '<div class="msg-actions">' +
           quoteAction +
@@ -861,6 +871,11 @@ async function uploadPendingFile(caption) {
   try {
     const path = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
     const ref  = storage.ref(path);
+
+    // Show upload progress in the temp element
+    var tempEl2 = document.querySelector('[data-msg-id="' + tempId + '"]');
+    if (tempEl2) tempEl2.style.opacity = '0.5';
+
     await ref.put(file);
     const url  = await ref.getDownloadURL();
 
@@ -893,7 +908,14 @@ async function uploadPendingFile(caption) {
   } catch (err) {
     var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
     if (tempEl) tempEl.remove();
-    alert('Upload failed: ' + err.message);
+    console.error('Upload error:', err);
+    if (err.code === 'storage/unauthorized') {
+      alert('Upload failed: Storage permission denied.\n\nGo to Firebase Console → Storage → Rules and set:\nallow read, write: if true;');
+    } else if (err.code === 'storage/unknown' || err.message.includes('CORS')) {
+      alert('Upload failed: CORS or network error. Check Firebase Storage is enabled for this project.');
+    } else {
+      alert('Upload failed: ' + (err.message || err.code || err));
+    }
   }
 }
 
@@ -1433,11 +1455,28 @@ function linkify(escapedText) {
 }
 
 // Escape HTML then convert newlines and linkify
+// Returns true if str contains only emoji characters (and whitespace), no regular text
+function isEmojiOnly(str) {
+  // Strip whitespace, then check if what remains consists entirely of emoji code points
+  var stripped = str.replace(/\s/g, '');
+  if (!stripped.length) return false;
+  // Match emoji sequences: base emoji + optional variation/ZWJ/skin-tone modifiers
+  var emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)(?:\u200D(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F))*[\u{1F3FB}-\u{1F3FF}]?(?:\u200D(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)(?:[\u{1F3FB}-\u{1F3FF}])?)*$/u;
+  // Split into grapheme-like clusters and test each
+  var segments = Array.from(stripped.matchAll(/\p{Emoji_Presentation}(?:\uFE0F|\u20E3)?(?:\u200D\p{Emoji_Presentation}(?:\uFE0F|\u20E3)?)*[\u{1F3FB}-\u{1F3FF}]?|\p{Emoji}\uFE0F(?:\u200D\p{Emoji_Presentation}(?:\uFE0F|\u20E3)?)*[\u{1F3FB}-\u{1F3FF}]?/gu));
+  if (!segments.length) return false;
+  // Ensure the full stripped string is covered by emoji matches only
+  var totalLen = segments.reduce(function(sum, m) { return sum + m[0].length; }, 0);
+  return totalLen === stripped.length && segments.length <= 5;
+}
+
 function renderText(str) {
+  // If the message is emoji-only, render it large with no bubble background
+  if (isEmojiOnly(str)) {
+    return '<span class="emoji-large">' + escapeHtml(str) + '</span>';
+  }
   var escaped = escapeHtml(str);
-  // Convert newlines to <br>
   escaped = escaped.replace(/\n/g, '<br>');
-  // Make URLs clickable
   return linkify(escaped);
 }
 

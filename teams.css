@@ -380,6 +380,21 @@ body {
   border: none;
 }
 
+/* Emoji-only message — large, no bubble background */
+.msg-bubble:has(.emoji-large),
+.msg-bubble.emoji-bubble {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 2px 4px !important;
+}
+
+.emoji-large {
+  font-size: 42px;
+  line-height: 1.1;
+  display: block;
+}
+
 .msg-bubble:hover .msg-actions { display: flex; }
 
 .msg-actions {
