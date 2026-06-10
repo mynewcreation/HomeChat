@@ -138,7 +138,24 @@ function renderChannels(filter) {
     });
 }
 
-// RENDER DMs — only show users with existing conversations, sorted by most recent
+// DM nickname overrides — stored locally per user session
+var _dmNicknames = JSON.parse(localStorage.getItem('mhc_dm_nicknames') || '{}');
+
+function getDmNickname(userName) {
+  return _dmNicknames[userName] || userName;
+}
+
+function saveDmNickname(userName, nickname) {
+  nickname = nickname.trim();
+  if (nickname && nickname !== userName) {
+    _dmNicknames[userName] = nickname;
+  } else {
+    delete _dmNicknames[userName];
+  }
+  localStorage.setItem('mhc_dm_nicknames', JSON.stringify(_dmNicknames));
+}
+
+// RENDER DMs — show ALL users (with or without existing conversation)
 function renderDMs(users, filter) {
   filter = filter || '';
   const list = document.getElementById('dmList');
@@ -146,38 +163,37 @@ function renderDMs(users, filter) {
 
   var filtered = users
     .filter(function(u) { return u.name !== state.currentUser.name; })
-    .filter(function(u) { return u.name.toLowerCase().includes((filter || '').toLowerCase()); })
-    // Only show if there is an existing conversation (has unread or known activity)
     .filter(function(u) {
-      var dmId = dmChannelId(state.currentUser.name, u.name);
-      var hasUnread  = (state.unread[dmId] || 0) > 0;
-      var hasActivity = (state.dmLastActivity[dmId] || 0) > 0;
-      return hasUnread || hasActivity;
+      var displayName = getDmNickname(u.name).toLowerCase();
+      var realName    = u.name.toLowerCase();
+      var f = (filter || '').toLowerCase();
+      return displayName.includes(f) || realName.includes(f);
     });
 
-  // Sort: most recent activity first, then alphabetical for ties
+  // Sort: most recent activity first, then alphabetical
   filtered.sort(function(a, b) {
     var dmA = dmChannelId(state.currentUser.name, a.name);
     var dmB = dmChannelId(state.currentUser.name, b.name);
     var tA  = state.dmLastActivity[dmA] || 0;
     var tB  = state.dmLastActivity[dmB] || 0;
     if (tB !== tA) return tB - tA;
-    return a.name.localeCompare(b.name);
+    return getDmNickname(a.name).localeCompare(getDmNickname(b.name));
   });
 
   filtered.forEach(function(u) {
     const dmId      = dmChannelId(state.currentUser.name, u.name);
     const hasUnread = state.unread[dmId] > 0;
+    const nickname  = getDmNickname(u.name);
 
     const div = document.createElement('div');
     div.className = 'channel-item' + (dmId === state.currentChannel ? ' active' : '');
-    div.onclick   = function() { loadChannelAndCloseSidebar(dmId, u.name, 'Direct message with ' + u.name); };
+    div.onclick   = function() { loadChannelAndCloseSidebar(dmId, nickname, 'Direct message with ' + nickname); };
 
     const dot = document.createElement('span');
     dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
 
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = u.name;
+    nameSpan.textContent = nickname;
     nameSpan.className = hasUnread ? 'ch-label unread-item' : 'ch-label';
 
     div.appendChild(dot);
@@ -190,6 +206,14 @@ function renderDMs(users, filter) {
       div.appendChild(badge);
     }
 
+    // ··· menu button
+    const menuBtn = document.createElement('span');
+    menuBtn.className = 'ch-menu-btn';
+    menuBtn.textContent = '···';
+    menuBtn.title = 'Options';
+    menuBtn.onclick = function(e) { e.stopPropagation(); openDmCtxMenu(e, u); };
+    div.appendChild(menuBtn);
+
     list.appendChild(div);
   });
 }
@@ -199,6 +223,122 @@ var _lastKnownUsers = [];
 function renderDMsFromCache() {
   renderDMs(_lastKnownUsers);
 }
+
+// ── DM CONTEXT MENU ──────────────────────────────────────────
+var _ctxDmUser = null;
+
+var _dmCtxMenu = null;
+function _getDmCtxMenu() {
+  if (!_dmCtxMenu) {
+    _dmCtxMenu = document.createElement('div');
+    _dmCtxMenu.className = 'ctx-menu';
+    _dmCtxMenu.id = 'dmCtxMenu';
+    _dmCtxMenu.innerHTML =
+      '<div class="ctx-item" onclick="openDmRenameModal()">✏️ Rename (view only)</div>' +
+      '<div class="ctx-item danger" onclick="deleteDmConversation()">🗑️ Delete Conversation</div>';
+    document.body.appendChild(_dmCtxMenu);
+  }
+  return _dmCtxMenu;
+}
+
+function openDmCtxMenu(e, user) {
+  _ctxDmUser = user;
+  var menu = _getDmCtxMenu();
+  menu.classList.add('show');
+  var x = Math.min(e.clientX, window.innerWidth  - 220);
+  var y = Math.min(e.clientY, window.innerHeight - 80);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+}
+
+function closeDmCtxMenu() {
+  var menu = _getDmCtxMenu();
+  if (menu) menu.classList.remove('show');
+  _ctxDmUser = null;
+}
+
+// Rename — view only, stored in localStorage
+function openDmRenameModal() {
+  var u = _ctxDmUser;
+  closeDmCtxMenu();
+  if (!u) return;
+  var current = getDmNickname(u.name);
+
+  // Build inline modal
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay show';
+  overlay.innerHTML =
+    '<div class="modal-box" style="width:min(320px,calc(100vw - 24px))">' +
+      '<h3>Rename Contact</h3>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Only visible to you. Real name: <strong>' + escapeHtml(u.name) + '</strong></p>' +
+      '<div class="form-group" style="margin-bottom:16px;">' +
+        '<input type="text" id="dmRenameInput" placeholder=" " value="' + escapeHtml(current) + '">' +
+        '<label>Display Name</label>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn cancel" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>' +
+        '<button class="btn confirm" onclick="saveDmRename(this,\'' + escapeHtml(u.name) + '\')">Save</button>' +
+      '</div>' +
+    '</div>';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  setTimeout(function() {
+    var inp = document.getElementById('dmRenameInput');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 50);
+}
+
+function saveDmRename(btn, realName) {
+  var inp = document.getElementById('dmRenameInput');
+  if (!inp) return;
+  saveDmNickname(realName, inp.value);
+  btn.closest('.modal-overlay').remove();
+  renderDMsFromCache();
+  // If this DM is currently open, update the topbar title
+  var dmId = dmChannelId(state.currentUser.name, realName);
+  if (state.currentChannel === dmId) {
+    var nickname = getDmNickname(realName);
+    document.getElementById('channelTitle').textContent = nickname;
+    document.getElementById('channelDesc').textContent  = 'Direct message with ' + nickname;
+  }
+}
+
+// Delete conversation — removes all messages in the DM channel for both sides
+async function deleteDmConversation() {
+  var u = _ctxDmUser;
+  closeDmCtxMenu();
+  if (!u) return;
+
+  var nickname = getDmNickname(u.name);
+  if (!confirm('Delete your conversation with "' + nickname + '"? This removes all messages for both of you and cannot be undone.')) return;
+
+  var dmId = dmChannelId(state.currentUser.name, u.name);
+  try {
+    var snap = await db.collection('channels').doc(dmId).collection('messages').get();
+    var batch = db.batch();
+    snap.docs.forEach(function(d) { batch.delete(d.ref); });
+    if (!snap.empty) await batch.commit();
+
+    // Clear local activity so DM stays visible but shows empty
+    state.dmLastActivity[dmId] = 0;
+
+    // If currently viewing this DM, clear the message area
+    if (state.currentChannel === dmId) {
+      document.getElementById('messagesArea').innerHTML =
+        '<div style="text-align:center;color:#aaa;margin-top:40px;font-size:14px;">No messages yet. Say hello!</div>';
+    }
+    renderDMsFromCache();
+  } catch(err) {
+    alert('Error deleting conversation: ' + err.message);
+  }
+}
+
+// Close DM ctx menu when clicking outside
+document.addEventListener('mousedown', function(e) {
+  if (!e.target.closest('#dmCtxMenu') && !e.target.closest('.ch-menu-btn')) {
+    closeDmCtxMenu();
+  }
+});
 
 // New DM modal — pick a user to start a conversation
 var _newDmModal = null;
