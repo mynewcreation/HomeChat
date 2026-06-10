@@ -406,7 +406,7 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .msg-group.mine .msg-bubble {
@@ -431,13 +431,11 @@ body {
   display: block;
 }
 
-.msg-bubble:hover .msg-actions { display: flex; }
-
+/* msg-actions is now a sibling of msg-bubble inside msg-content.
+   Trigger on msg-content hover — no gap problem possible. */
 .msg-actions {
   display: none;
-  position: absolute;
-  bottom: -36px;
-  right: 4px;
+  margin-top: 2px;
   background: #22234a;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -447,7 +445,13 @@ body {
   z-index: 10;
   align-items: center;
   white-space: normal;
+  width: fit-content;
 }
+
+.msg-content:hover .msg-actions { display: flex; }
+.msg-actions:hover               { display: flex; }
+
+.msg-group.mine .msg-actions { margin-left: auto; }
 
 /* SVG action button */
 .ma-btn {
@@ -1401,32 +1405,31 @@ body {
   .date-divider { font-size: 10px; margin: 4px 0; }
 
   /* ── Message actions: tap to show, inline below bubble ── */
-  .msg-bubble .msg-actions {
+  .msg-actions {
     display: none;
   }
 
-  .msg-bubble.actions-open .msg-actions {
+  .msg-content.actions-open .msg-actions {
     display: flex;
-    position: static;
     background: transparent;
     border: none;
     box-shadow: none;
-    padding: 5px 0 2px 0;
+    padding: 3px 0 2px 0;
     gap: 2px;
     flex-wrap: wrap;
     justify-content: flex-start;
     max-width: 100%;
     overflow: hidden;
-    top: unset; right: unset; left: unset;
     border-radius: 0;
+    margin-top: 2px;
   }
 
-  .msg-group.mine .msg-bubble.actions-open .msg-actions {
+  .msg-group.mine .msg-content.actions-open .msg-actions {
     justify-content: flex-end;
   }
 
-  .msg-bubble.actions-open .msg-actions span,
-  .msg-bubble.actions-open .msg-actions .ma-btn {
+  .msg-content.actions-open .msg-actions span,
+  .msg-content.actions-open .msg-actions .ma-btn {
     font-size: 14px;
     padding: 4px 5px;
     border-radius: 6px;
@@ -1438,8 +1441,8 @@ body {
     height: 32px;
   }
 
-  .msg-bubble.actions-open .msg-actions span:active,
-  .msg-bubble.actions-open .msg-actions .ma-btn:active {
+  .msg-content.actions-open .msg-actions span:active,
+  .msg-content.actions-open .msg-actions .ma-btn:active {
     background: rgba(255,255,255,0.2);
   }
 

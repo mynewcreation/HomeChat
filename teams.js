@@ -515,14 +515,8 @@ function loadChannel(id, title, desc) {
             state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
           }
           updateFavicon(true);
-          fromOthers.forEach(function(m) {
-            var chLabel = (channels.find(function(c) { return c.id === id; }) || {}).label || ('#' + id);
-            var cleanText = (m.text || '')
-              .replace(/<br\s*\/?>/gi, ' ')
-              .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
-              .slice(0, 100);
-            showBrowserNotification(m.sender + ' · ' + chLabel, cleanText, id);
-          });
+          // Notifications are handled exclusively by startNotifListeners
+          // to avoid duplicates — do NOT call showBrowserNotification here.
         }
       }
 
@@ -716,14 +710,15 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
       '</div>' +
       '<div class="msg-bubble' + (emojiOnly ? ' emoji-bubble' : '') + '" id="bubble-' + (msg.id || '') + '">' +
         content +
-        '<div class="msg-actions">' +
-          quoteAction +
-          '<span class="ma-btn ma-btn-like" onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">' + svgLike + '</span>' +
-          '<span class="ma-btn ma-btn-heart" onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">' + svgHeart + '</span>' +
-          '<span class="ma-btn ma-btn-laugh" onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">' + svgLaugh + '</span>' +
-          editAction +
-          deleteAction +
-        '</div>' +
+      '</div>' +
+      '<div class="msg-actions">' +
+        quoteAction +
+        '<span class="ma-btn ma-btn-like" onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">' + svgLike + '</span>' +
+        '<span class="ma-btn ma-btn-heart" onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">' + svgHeart + '</span>' +
+        '<span class="ma-btn ma-btn-laugh" onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">' + svgLaugh + '</span>' +
+        editAction +
+        deleteAction +
+      '</div>' +
       '</div>' +
       '<div class="reactions">' + reactions + '</div>' +
       seenHtml +
@@ -733,18 +728,18 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
 
   // Mobile: tap bubble to toggle action buttons
   if ('ontouchstart' in window || window.innerWidth <= 640) {
-    const bubble = group.querySelector('.msg-bubble');
-    if (bubble) {
+    const bubble  = group.querySelector('.msg-bubble');
+    const content = group.querySelector('.msg-content');
+    if (bubble && content) {
       bubble.addEventListener('click', function(e) {
-        // Don't toggle if user tapped an action button or a link
         if (e.target.closest('.msg-actions') || e.target.tagName === 'A') return;
         const isMobile = window.innerWidth <= 640;
         if (!isMobile) return;
-        // Close all other open bubbles first
-        document.querySelectorAll('.msg-bubble.actions-open').forEach(function(b) {
-          if (b !== bubble) b.classList.remove('actions-open');
+        // Close all other open msg-content first
+        document.querySelectorAll('.msg-content.actions-open').forEach(function(c) {
+          if (c !== content) c.classList.remove('actions-open');
         });
-        bubble.classList.toggle('actions-open');
+        content.classList.toggle('actions-open');
       });
     }
   }
@@ -1623,6 +1618,7 @@ async function logout() {
   await markOffline();
   state.unsubscribeNotifs.forEach(function(u) { u(); });
   state.unsubscribeNotifs = [];
+  _notifListenerActive = false;
   if (state.unsubscribeMessages) { state.unsubscribeMessages(); state.unsubscribeMessages = null; }
   if (state.unsubscribeUsers) { state.unsubscribeUsers(); state.unsubscribeUsers = null; }
   sessionStorage.removeItem('teamsUser');
@@ -2069,25 +2065,32 @@ function cancelEdit(msgId) {
 
 // ── NOTIFICATIONS ──────────────────────────────────────────
 
-// Subscribe a SINGLE collection-group listener for cross-channel notifications.
-// This replaces the old approach of one listener per channel, which was burning
-// through Firestore read quota (N channels × N DMs = dozens of open listeners).
+// Track message IDs that have already triggered a notification — prevents duplicates
+// when startNotifListeners is restarted or the active-channel listener also fires.
+var _notifiedMsgIds = new Set();
+
+// Guard so we only start ONE listener — restart only when truly needed
+var _notifListenerActive = false;
+
 function startNotifListeners() {
-  // Tear down old listeners
+  // Only create the listener once. Subsequent calls are no-ops.
+  if (_notifListenerActive) return;
+  _notifListenerActive = true;
+
+  // Tear down any stale listeners first
   state.unsubscribeNotifs.forEach(function(unsub) { unsub(); });
   state.unsubscribeNotifs = [];
 
-  // Build a label lookup so we can show the channel name in notifications
+  // Build a label lookup
   var labelMap = {};
   channels.forEach(function(ch) { labelMap[ch.id] = ch.label || ('#' + ch.id); });
   _lastKnownUsers.forEach(function(u) {
     if (u.name === state.currentUser.name) return;
     var dmId = dmChannelId(state.currentUser.name, u.name);
-    labelMap[dmId] = u.name;
+    labelMap[dmId] = getDmNickname(u.name);
   });
 
-  // One collection-group query across ALL "messages" sub-collections.
-  // We only look at messages newer than "now" so we don't re-read history.
+  // Only listen for messages newer than right now
   var listenFrom = firebase.firestore.Timestamp.now();
 
   var unsub = db.collectionGroup('messages')
@@ -2103,13 +2106,13 @@ function startNotifListeners() {
         // Skip own messages
         if (m.sender === state.currentUser.name) return;
 
-        // Derive the channel ID from the document path:
-        // channels/{channelId}/messages/{msgId}
-        var pathParts = doc.ref.path.split('/');
-        var chId = pathParts[1]; // index 1 = channelId
+        // Deduplicate — never fire the same message twice
+        if (_notifiedMsgIds.has(m.id)) return;
+        _notifiedMsgIds.add(m.id);
 
-        // Skip the currently open channel — its main listener handles it
-        if (chId === state.currentChannel) return;
+        // Derive channel ID from path: channels/{channelId}/messages/{msgId}
+        var pathParts = doc.ref.path.split('/');
+        var chId = pathParts[1];
 
         // Update unread state
         state.unread[chId] = (state.unread[chId] || 0) + 1;
@@ -2123,18 +2126,32 @@ function startNotifListeners() {
         updateTabTitle();
         updateFavicon(true);
 
-        var chLabel = labelMap[chId] || ('#' + chId);
+        // Only show a browser notification if the window doesn't have focus
+        // OR if the message is not in the currently open channel
+        var isCurrentChannel = (chId === state.currentChannel);
+        var hasFocus = document.hasFocus();
+        if (hasFocus && isCurrentChannel) return;
+
+        var chLabel = labelMap[chId] || chId;
+        // Keep label map fresh for DMs
+        if (!chLabel && chId.startsWith('dm-')) {
+          _lastKnownUsers.forEach(function(u) {
+            if (u.name !== state.currentUser.name) {
+              var id = dmChannelId(state.currentUser.name, u.name);
+              if (id === chId) chLabel = getDmNickname(u.name);
+            }
+          });
+        }
+
         var cleanText = (m.text || '')
           .replace(/<br\s*\/?>/gi, ' ')
           .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
           .slice(0, 100);
 
-        showBrowserNotification(m.sender + ' · ' + chLabel, cleanText, chId);
+        showBrowserNotification(m.sender + ' · ' + (chLabel || chId), cleanText, chId);
       });
     }, function(err) {
-      // Collection-group queries require a Firestore index.
-      // If the index doesn't exist yet, fall back silently — notifications
-      // will still work for the active channel via its own listener.
+      _notifListenerActive = false; // allow retry on next call if index missing
       console.warn('Notif listener error (index may be missing):', err.message);
     });
 
@@ -2171,7 +2188,7 @@ function showBrowserNotification(title, body, channelId) {
       body: body,
       icon: 'M-LOGO.png',
       tag: channelId || 'general',
-      renotify: true,
+      // renotify removed — prevents repeated OS alerts for the same channel
     });
     notif.onclick = function() {
       window.focus();
