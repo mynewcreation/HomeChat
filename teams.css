@@ -107,6 +107,56 @@ body {
   text-transform: uppercase;
 }
 
+/* Section header row — label + ··· button */
+.section-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px 3px 12px;
+  position: relative;
+}
+.section-row .section-label {
+  padding: 0;
+  flex: 1;
+}
+.section-more-btn {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  letter-spacing: 1px;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.section-more-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+/* Section dropdown menu */
+.section-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 6px;
+  background: #22234a;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 150px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.45);
+  z-index: 200;
+  white-space: nowrap;
+}
+.section-menu.show { display: block; }
+.section-menu div {
+  padding: 7px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+.section-menu div:hover { background: rgba(255,255,255,0.08); color: #fff; }
+
 .channel-list { overflow-y: auto; flex-shrink: 0; }
 
 .channel-item {
@@ -153,21 +203,6 @@ body {
   min-width: 16px;
   text-align: center;
 }
-
-.add-channel-btn {
-  margin: 4px 10px;
-  background: rgba(255,255,255,0.06);
-  border: 1px dashed rgba(255,255,255,0.2);
-  color: var(--text-muted);
-  border-radius: 4px;
-  padding: 5px;
-  cursor: pointer;
-  font-size: 12px;
-  width: calc(100% - 20px);
-  transition: background 0.2s;
-}
-
-.add-channel-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
 
 .sidebar-profile {
   display: flex;
@@ -1304,7 +1339,6 @@ body {
   .sidebar-profile { padding: 6px 10px; }
   .section-label { padding: 4px 10px 2px; font-size: 10px; }
   .channel-item { padding: 7px 10px; font-size: 12px; min-height: 30px; }
-  .add-channel-btn { margin: 3px 8px; font-size: 11px; width: calc(100% - 16px); padding: 4px; }
 
   /* ── Topbar ── */
   .topbar {

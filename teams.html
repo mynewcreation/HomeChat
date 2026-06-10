@@ -44,12 +44,23 @@
   </div>
 
   <!-- Channels -->
-  <div class="section-label">CHANNELS</div>
+  <div class="section-row">
+    <span class="section-label">CHANNELS</span>
+    <span class="section-more-btn" id="channelMoreBtn" onclick="toggleSectionMenu('channelSectionMenu', event)" title="Add channel">···</span>
+    <div class="section-menu" id="channelSectionMenu">
+      <div onclick="closeSectionMenu('channelSectionMenu');openAddChannelModal()">＋ Add Channel</div>
+    </div>
+  </div>
   <div id="channelList" class="channel-list"></div>
-  <button class="add-channel-btn" onclick="openAddChannelModal()">+ Add Channel</button>
 
   <!-- Direct Messages -->
-  <div class="section-label" style="margin-top:16px;">DIRECT MESSAGES</div>
+  <div class="section-row" style="margin-top:10px;">
+    <span class="section-label">DIRECT MESSAGES</span>
+    <span class="section-more-btn" id="dmMoreBtn" onclick="toggleSectionMenu('dmSectionMenu', event)" title="New message">···</span>
+    <div class="section-menu" id="dmSectionMenu">
+      <div onclick="closeSectionMenu('dmSectionMenu');openNewDmModal()">＋ New Message</div>
+    </div>
+  </div>
   <div id="dmList" class="channel-list"></div>
 
 </div>

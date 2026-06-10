@@ -192,25 +192,12 @@ function renderDMs(users, filter) {
 
     list.appendChild(div);
   });
-
-  // Show "New Message" button to start a conversation with someone new
-  renderNewDmButton(users, list);
 }
 
 // Helper to re-render DMs from current users snapshot
 var _lastKnownUsers = [];
 function renderDMsFromCache() {
   renderDMs(_lastKnownUsers);
-}
-
-// "New Message" button — lets user start a DM with someone they haven't talked to yet
-function renderNewDmButton(allUsers, list) {
-  var btn = document.createElement('button');
-  btn.className = 'add-channel-btn';
-  btn.textContent = '+ New Message';
-  btn.style.marginTop = '6px';
-  btn.onclick = function() { openNewDmModal(allUsers); };
-  list.appendChild(btn);
 }
 
 // New DM modal — pick a user to start a conversation
@@ -1127,6 +1114,29 @@ function filterChannels(val) {
   renderChannels(val);
   renderDMs(_lastKnownUsers, val);
 }
+
+// ============================================================
+//  SECTION HEADER MENUS (CHANNELS / DIRECT MESSAGES ···)
+// ============================================================
+function toggleSectionMenu(menuId, e) {
+  e.stopPropagation();
+  var menu = document.getElementById(menuId);
+  if (!menu) return;
+  var isOpen = menu.classList.contains('show');
+  document.querySelectorAll('.section-menu.show').forEach(function(m) { m.classList.remove('show'); });
+  if (!isOpen) menu.classList.add('show');
+}
+
+function closeSectionMenu(menuId) {
+  var menu = document.getElementById(menuId);
+  if (menu) menu.classList.remove('show');
+}
+
+document.addEventListener('mousedown', function(e) {
+  if (!e.target.closest('.section-row')) {
+    document.querySelectorAll('.section-menu.show').forEach(function(m) { m.classList.remove('show'); });
+  }
+});
 
 // ============================================================
 //  CHANNEL MANAGEMENT
