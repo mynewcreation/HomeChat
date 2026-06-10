@@ -711,6 +711,8 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
       '<div class="msg-bubble' + (emojiOnly ? ' emoji-bubble' : '') + '" id="bubble-' + (msg.id || '') + '">' +
         content +
       '</div>' +
+      '<div class="reactions">' + reactions + '</div>' +
+      seenHtml +
       '<div class="msg-actions">' +
         quoteAction +
         '<span class="ma-btn ma-btn-like" onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">' + svgLike + '</span>' +
@@ -719,9 +721,6 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
         editAction +
         deleteAction +
       '</div>' +
-      '</div>' +
-      '<div class="reactions">' + reactions + '</div>' +
-      seenHtml +
     '</div>';
 
   area.appendChild(group);
@@ -742,6 +741,22 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
         content.classList.toggle('actions-open');
       });
     }
+  }
+
+  // Flip action bar above bubble when message is near the bottom of the viewport
+  var msgContent = group.querySelector('.msg-content');
+  if (msgContent) {
+    msgContent.addEventListener('mouseenter', function() {
+      var rect = group.getBoundingClientRect();
+      var area = document.getElementById('messagesArea');
+      var areaRect = area ? area.getBoundingClientRect() : { bottom: window.innerHeight };
+      // If less than 80px from the bottom of the messages area, flip up
+      if (areaRect.bottom - rect.bottom < 80) {
+        msgContent.classList.add('flip-up');
+      } else {
+        msgContent.classList.remove('flip-up');
+      }
+    });
   }
 }
 

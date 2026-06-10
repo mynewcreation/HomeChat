@@ -319,10 +319,19 @@ body {
   font-size: 12px;
   color: #fff;
   flex-shrink: 0;
-  align-self: flex-end;
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
-.msg-content { max-width: 68%; }
+.msg-content {
+  max-width: 68%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  /* Extend hover zone downward to cover the floating action bar */
+  padding-bottom: 34px;
+  margin-bottom: -34px;
+}
 
 .msg-meta {
   font-size: 10px;
@@ -406,7 +415,6 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
-  margin-bottom: 2px;
 }
 
 .msg-group.mine .msg-bubble {
@@ -431,27 +439,42 @@ body {
   display: block;
 }
 
-/* msg-actions is now a sibling of msg-bubble inside msg-content.
-   Trigger on msg-content hover — no gap problem possible. */
+/* msg-actions sits in a zero-height row below the bubble — no layout shift */
 .msg-actions {
   display: none;
-  margin-top: 2px;
+  position: absolute;
+  bottom: 0;           /* sits inside the padding-bottom zone, right under the bubble */
+  left: 0;
   background: #22234a;
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 3px 5px;
   gap: 1px;
   box-shadow: 0 3px 12px rgba(0,0,0,0.5);
-  z-index: 10;
+  z-index: 100;
   align-items: center;
-  white-space: normal;
+  white-space: nowrap;
   width: fit-content;
+  height: 34px;
 }
 
 .msg-content:hover .msg-actions { display: flex; }
 .msg-actions:hover               { display: flex; }
 
-.msg-group.mine .msg-actions { margin-left: auto; }
+/* Own messages — right-aligned */
+.msg-group.mine .msg-actions { left: auto; right: 0; }
+
+/* Flip action bar ABOVE the bubble when near bottom of screen */
+.msg-content.flip-up .msg-actions {
+  bottom: auto;
+  top: 0;
+}
+.msg-content.flip-up {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  padding-top: 34px;
+  margin-top: -34px;
+}
 
 /* SVG action button */
 .ma-btn {
@@ -501,6 +524,11 @@ body {
   box-shadow: 0 3px 10px rgba(0,0,0,0.4);
   z-index: 9999;
   white-space: nowrap;
+}
+/* When action bar is flipped above, dropdown also opens upward */
+.msg-content.flip-up .del-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 .del-menu.show { display: block; }
 .del-menu div {
@@ -619,6 +647,8 @@ body {
   flex-wrap: wrap;
   gap: 3px;
   margin-top: 3px;
+  position: relative;
+  z-index: 1;
 }
 
 .reaction-chip {
@@ -1409,8 +1439,18 @@ body {
     display: none;
   }
 
+  /* Reset the hover-extension padding on mobile — not needed since tap shows inline */
+  .msg-content,
+  .msg-content.flip-up {
+    padding-bottom: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    margin-top: 0;
+  }
+
   .msg-content.actions-open .msg-actions {
     display: flex;
+    position: static;
     background: transparent;
     border: none;
     box-shadow: none;
