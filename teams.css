@@ -371,6 +371,7 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
+  margin-bottom: 4px;
 }
 
 .msg-group.mine .msg-bubble {
@@ -400,7 +401,7 @@ body {
 .msg-actions {
   display: none;
   position: absolute;
-  top: -32px;
+  bottom: -36px;
   right: 4px;
   background: #22234a;
   border: 1px solid var(--border);
@@ -442,6 +443,39 @@ body {
 .ma-btn-danger:hover { color: #ff6b6b; background: rgba(196,49,75,0.15); }
 
 .msg-actions span:hover { background: rgba(255,255,255,0.15); }
+
+/* ── DELETE DROPDOWN ── */
+.del-wrap {
+  position: relative;
+}
+.del-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  bottom: auto;
+  right: 0;
+  background: var(--sidebar-bg, #1e1e2e);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 148px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+  z-index: 9999;
+  white-space: nowrap;
+}
+.del-menu.show { display: block; }
+.del-menu div {
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-main, #ddd);
+  transition: background 0.15s;
+  line-height: 1.4;
+}
+.del-menu div:hover { background: rgba(255,255,255,0.08); }
+/* "Delete for Everyone" is always first and red; "Delete for Me" is normal */
+.del-menu div:first-child { color: #ff6b6b; }
+.del-menu div:only-child  { color: var(--text-main, #ddd); }
 
 /* ── EDIT MODE ── */
 .msg-editing {

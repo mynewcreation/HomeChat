@@ -312,8 +312,8 @@ function renderMembers(users) {
       '<span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(u.name) + (isSelf ? ' <span style="font-size:10px;color:var(--text-muted)">(you)</span>' : '') + '</span>' +
       '<span class="dot ' + (u.status || 'offline') + '"></span>';
 
-    // Add ... menu button for every user (admin can remove others; anyone can remove themselves)
-    if (!isSelf || isAdmin) {
+    // Add ... menu button: admin can manage all users; anyone can remove themselves
+    if (isSelf || isAdmin) {
       const menuBtn = document.createElement('span');
       menuBtn.className = 'member-menu-btn';
       menuBtn.textContent = '···';
@@ -444,6 +444,9 @@ function renderMessages(msgs) {
 
   var lastLabel = null;
   msgs.forEach(function(msg) {
+    // Skip messages the current user has hidden for themselves
+    if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
+
     var label = msgDateLabel(msg);
     if (label !== lastLabel) {
       area.appendChild(makeDateDivider(label));
@@ -524,7 +527,7 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   var svgHeart  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>';
   var svgLaugh  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>';
   var svgEdit   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
-  var svgDelete = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
+  var svgDelete = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
 
   const quoteAction  = msg.id
     ? '<span class="ma-btn" onclick="quoteMessage(\'' + msg.id + '\')" title="Reply">' + svgReply + '</span>'
@@ -532,9 +535,22 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
   const editAction   = isMine && msg.id
     ? '<span class="ma-btn" onclick="startEdit(\'' + msg.id + '\')" title="Edit">' + svgEdit + '</span>'
     : '';
-  const deleteAction = isMine && msg.id
-    ? '<span class="ma-btn ma-btn-danger" onclick="deleteMsg(\'' + msg.id + '\')" title="Delete">' + svgDelete + '</span>'
-    : '';
+
+  // Delete actions — everyone gets the dropdown: "Delete for Everyone" (own msgs only) + "Delete for Me"
+  var deleteAction = '';
+  if (msg.id) {
+    var deleteEveryoneItem = isMine
+      ? '<div onclick="event.stopPropagation();closeDeleteMenu();deleteMsg(\'' + msg.id + '\')"><span style="font-size:11px">🗑️</span> Delete for Everyone</div>'
+      : '';
+    deleteAction =
+      '<span class="ma-btn ma-btn-danger del-wrap" title="Delete" onclick="toggleDeleteMenu(\'' + msg.id + '\',event)">' +
+        svgDelete +
+        '<div class="del-menu" id="delmenu-' + msg.id + '">' +
+          deleteEveryoneItem +
+          '<div onclick="event.stopPropagation();closeDeleteMenu();deleteForMe(\'' + msg.id + '\')"><span style="font-size:11px">🙈</span> Delete for Me</div>' +
+        '</div>' +
+      '</span>';
+  }
 
   // Sender name — bold+orange if this message is unread, clickable to mark read
   var senderHtml = '';
@@ -717,6 +733,50 @@ async function reactTo(msgId, emoji) {
 }
 
 function addReaction(msgId, emoji) { reactTo(msgId, emoji); }
+
+// ── DELETE FOR ME — hides the message only from the current user's view ──────
+function deleteForMe(msgId) {
+  var group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  if (group) group.style.opacity = '0.3';
+
+  showUndoToast(msgId + '_me', function() {
+    if (group) group.style.opacity = '';
+    clearTimeout(_deleteTimers['me_' + msgId]);
+    delete _deleteTimers['me_' + msgId];
+  });
+
+  _deleteTimers['me_' + msgId] = setTimeout(async function() {
+    delete _deleteTimers['me_' + msgId];
+    if (group) group.remove();
+    try {
+      await db.collection('channels').doc(state.currentChannel)
+        .collection('messages').doc(msgId)
+        .update({
+          deletedFor: firebase.firestore.FieldValue.arrayUnion(state.currentUser.name)
+        });
+    } catch(e) {
+      if (group) group.style.opacity = '';
+    }
+  }, 5000);
+}
+
+// ── DELETE DROPDOWN — toggle mini-menu on own messages ───────────────────────
+function toggleDeleteMenu(msgId, e) {
+  e.stopPropagation();
+  var menu = document.getElementById('delmenu-' + msgId);
+  if (!menu) return;
+  var isOpen = menu.classList.contains('show');
+  document.querySelectorAll('.del-menu.show').forEach(function(m) { m.classList.remove('show'); });
+  if (!isOpen) menu.classList.add('show');
+}
+
+function closeDeleteMenu() {
+  document.querySelectorAll('.del-menu.show').forEach(function(m) { m.classList.remove('show'); });
+}
+
+document.addEventListener('mousedown', function(e) {
+  if (!e.target.closest('.del-wrap')) closeDeleteMenu();
+});
 
 // DELETE MESSAGE — with 5-second undo window
 var _deleteTimers = {}; // pending delete timers keyed by msgId
@@ -1124,6 +1184,13 @@ var _ctxMemberUser = null;
 
 function openMemberCtxMenu(e, user) {
   _ctxMemberUser = user;
+  const isSelf = user.name === state.currentUser.name;
+  const removeLabel = document.getElementById('memberCtxRemove');
+  if (removeLabel) {
+    removeLabel.innerHTML = isSelf
+      ? '🗑️ Delete My Account &amp; Clear History'
+      : '🗑️ Remove User &amp; Clear History';
+  }
   const menu = document.getElementById('memberCtxMenu');
   menu.classList.add('show');
   const x = Math.min(e.clientX, window.innerWidth  - 220);
