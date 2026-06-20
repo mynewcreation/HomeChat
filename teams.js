@@ -235,7 +235,8 @@ function _getDmCtxMenu() {
     _dmCtxMenu.id = 'dmCtxMenu';
     _dmCtxMenu.innerHTML =
       '<div class="ctx-item" onclick="openDmRenameModal()">✏️ Rename (view only)</div>' +
-      '<div class="ctx-item danger" onclick="deleteDmConversation()">🗑️ Delete Conversation</div>';
+      '<div class="ctx-item" onclick="deleteDmForMe()">🙈 Delete for Me</div>' +
+      '<div class="ctx-item danger" onclick="deleteDmConversation()">🗑️ Delete for Everyone</div>';
     document.body.appendChild(_dmCtxMenu);
   }
   return _dmCtxMenu;
@@ -303,14 +304,51 @@ function saveDmRename(btn, realName) {
   }
 }
 
-// Delete conversation — removes all messages in the DM channel for both sides
+// Delete conversation for me only — marks all messages with deletedFor so only I stop seeing them
+async function deleteDmForMe() {
+  var u = _ctxDmUser;
+  closeDmCtxMenu();
+  if (!u) return;
+
+  var nickname = getDmNickname(u.name);
+  if (!confirm('Hide this conversation with "' + nickname + '" from your view? The other person will not be affected.')) return;
+
+  var dmId = dmChannelId(state.currentUser.name, u.name);
+  var me   = state.currentUser.name;
+  try {
+    var snap = await db.collection('channels').doc(dmId).collection('messages').get();
+    // Batch update all messages — add current user to deletedFor
+    var batchSize = 0;
+    var batch = db.batch();
+    snap.docs.forEach(function(d) {
+      var data = d.data();
+      var df = data.deletedFor || [];
+      if (!df.includes(me)) {
+        batch.update(d.ref, { deletedFor: firebase.firestore.FieldValue.arrayUnion(me) });
+        batchSize++;
+      }
+    });
+    if (batchSize > 0) await batch.commit();
+
+    // If currently viewing this DM, clear the message area for this user
+    if (state.currentChannel === dmId) {
+      document.getElementById('messagesArea').innerHTML =
+        '<div style="text-align:center;color:#aaa;margin-top:40px;font-size:14px;">No messages yet. Say hello!</div>';
+    }
+    renderDMsFromCache();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// Delete conversation for everyone — removes messages from Firestore
 async function deleteDmConversation() {
   var u = _ctxDmUser;
   closeDmCtxMenu();
   if (!u) return;
 
   var nickname = getDmNickname(u.name);
-  if (!confirm('Delete your conversation with "' + nickname + '"? This removes all messages for both of you and cannot be undone.')) return;
+  if (!confirm('Delete conversation with "' + nickname + '" for EVERYONE? This removes all messages permanently and cannot be undone.')) return;
 
   var dmId = dmChannelId(state.currentUser.name, u.name);
   try {
@@ -773,7 +811,7 @@ async function sendMessage() {
   const text  = input.value.trim();
 
   // If there's a file pending, upload it — caption text is included in the same message
-  if (_pendingFile) {
+  if (_pendingFiles.length > 0) {
     input.value = '';
     autoResize(input);
     await uploadPendingFile(text);
@@ -833,6 +871,30 @@ function autoResize(el) {
   // If empty, let CSS/rows=1 handle the default height naturally
   el.style.height = (el.value === '' ? '' : newHeight + 'px');
 }
+
+// PASTE IMAGE — intercept Ctrl+V / long-press paste in the textarea
+document.addEventListener('DOMContentLoaded', function() {
+  var msgInput = document.getElementById('msgInput');
+  if (!msgInput) return;
+  msgInput.addEventListener('paste', function(e) {
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    var imageFiles = [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        var file = items[i].getAsFile();
+        if (!file) continue;
+        var ext  = file.type.split('/')[1] || 'png';
+        var name = 'pasted-image-' + Date.now() + '-' + i + '.' + ext;
+        imageFiles.push(new File([file], name, { type: file.type }));
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addFilesToPending(imageFiles);
+    }
+  });
+});
 
 // REACTIONS — per-user toggle (tap again to remove)
 async function reactTo(msgId, emoji) {
@@ -975,40 +1037,77 @@ function showUndoToast(msgId, onUndo) {
   }, 5000);
 }
 
-// FILE ATTACH — preview before send
-var _pendingFile = null;
+// FILE ATTACH — multiple files, preview before send
+var _pendingFiles = []; // array of File objects
 
 function cancelFileAttach() {
-  _pendingFile = null;
+  _pendingFiles = [];
   document.getElementById('filePreviewBar').style.display = 'none';
   document.getElementById('filePreviewInner').innerHTML = '';
   document.getElementById('fileInput').value = '';
 }
 
+function removePendingFile(index) {
+  _pendingFiles.splice(index, 1);
+  if (_pendingFiles.length === 0) {
+    cancelFileAttach();
+  } else {
+    renderFilePreview();
+  }
+}
+
+function renderFilePreview() {
+  var bar   = document.getElementById('filePreviewBar');
+  var inner = document.getElementById('filePreviewInner');
+  if (!bar || !inner) return;
+
+  if (_pendingFiles.length === 0) {
+    bar.style.display = 'none';
+    inner.innerHTML = '';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  inner.innerHTML = '';
+
+  _pendingFiles.forEach(function(file, index) {
+    var item = document.createElement('div');
+    item.className = 'fp-item';
+
+    var removeBtn = '<span class="fp-remove" onclick="removePendingFile(' + index + ')" title="Remove">✕</span>';
+
+    if (file.type.startsWith('image/')) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        item.innerHTML =
+          '<img src="' + e.target.result + '" class="fp-img" alt="' + escapeHtml(file.name) + '">' +
+          '<span class="fp-name">' + escapeHtml(file.name) + '</span>' +
+          removeBtn;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      item.innerHTML =
+        '<span class="fp-icon">📎</span>' +
+        '<span class="fp-name">' + escapeHtml(file.name) + '</span>' +
+        '<span class="fp-size">(' + formatFileSize(file.size) + ')</span>' +
+        removeBtn;
+    }
+
+    inner.appendChild(item);
+  });
+}
+
 async function attachFile(input) {
   if (!input.files.length) return;
-  const file = input.files[0];
-  _pendingFile = file;
+  // Add new files to the pending list (don't replace — accumulate)
+  Array.from(input.files).forEach(function(f) { _pendingFiles.push(f); });
+  input.value = ''; // reset so same file can be re-selected
+  renderFilePreview();
+}
 
-  // Show preview
-  const bar   = document.getElementById('filePreviewBar');
-  const inner = document.getElementById('filePreviewInner');
-  bar.style.display = 'flex';
-
-  if (file.type.startsWith('image/')) {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      inner.innerHTML =
-        '<img src="' + e.target.result + '" class="fp-img" alt="' + escapeHtml(file.name) + '">' +
-        '<span class="fp-name">' + escapeHtml(file.name) + '</span>';
-    };
-    reader.readAsDataURL(file);
-  } else {
-    inner.innerHTML =
-      '<span class="fp-icon">📎</span>' +
-      '<span class="fp-name">' + escapeHtml(file.name) + '</span>' +
-      '<span class="fp-size">(' + formatFileSize(file.size) + ')</span>';
-  }
+function addFilesToPending(files) {
+  Array.from(files).forEach(function(f) { _pendingFiles.push(f); });
+  renderFilePreview();
 }
 
 function formatFileSize(bytes) {
@@ -1018,100 +1117,94 @@ function formatFileSize(bytes) {
 }
 
 async function uploadPendingFile(caption) {
-  if (!_pendingFile) return;
-  const file = _pendingFile;
-  const isImage = file.type.startsWith('image/');
+  if (!_pendingFiles.length) return;
+  var files = _pendingFiles.slice(); // copy
   caption = caption || '';
   cancelFileAttach();
 
-  // Show a temp message immediately in the UI
-  const area   = document.getElementById('messagesArea');
-  const tempId = 'temp-' + Date.now();
+  var area = document.getElementById('messagesArea');
 
-  if (isImage) {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const tempMsg = {
-        id:        tempId,
-        sender:    state.currentUser.name,
-        color:     state.currentUser.color,
-        text:      caption,
-        file:      file.name,
-        fileUrl:   e.target.result,
-        fileType:  file.type,
-        time:      formatTime(new Date()),
-        timestamp: { toDate: function() { return new Date(); } },
+  // Upload each file as a separate message; caption only on the first
+  for (var i = 0; i < files.length; i++) {
+    var file    = files[i];
+    var msgCaption = (i === 0) ? caption : '';
+    var isImage = file.type.startsWith('image/');
+    var tempId  = 'temp-' + Date.now() + '-' + i;
+
+    // Show temp message immediately
+    await (function(f, tc, ti, img) {
+      return new Promise(function(resolve) {
+        if (img) {
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            var tempMsg = {
+              id: ti, sender: state.currentUser.name, color: state.currentUser.color,
+              text: tc, file: f.name, fileUrl: e.target.result, fileType: f.type,
+              time: formatTime(new Date()),
+              timestamp: { toDate: function() { return new Date(); } },
+              reactions: [],
+            };
+            appendMessageEl(area, tempMsg);
+            area.scrollTop = area.scrollHeight;
+            resolve();
+          };
+          reader.readAsDataURL(f);
+        } else {
+          var tempMsg = {
+            id: ti, sender: state.currentUser.name, color: state.currentUser.color,
+            text: tc, file: f.name, fileUrl: null, fileType: f.type,
+            time: formatTime(new Date()),
+            timestamp: { toDate: function() { return new Date(); } },
+            reactions: [],
+          };
+          appendMessageEl(area, tempMsg);
+          area.scrollTop = area.scrollHeight;
+          resolve();
+        }
+      });
+    })(file, msgCaption, tempId, isImage);
+
+    // Fade temp while uploading
+    var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
+    if (tempEl) tempEl.style.opacity = '0.5';
+
+    try {
+      var path  = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
+      var ref   = storage.ref(path);
+      await ref.put(file);
+      var url   = await ref.getDownloadURL();
+
+      // Remove temp
+      var tel = document.querySelector('[data-msg-id="' + tempId + '"]');
+      if (tel) tel.remove();
+
+      var firestoreMsg = {
+        sender: state.currentUser.name, color: state.currentUser.color,
+        text: msgCaption, file: file.name, fileUrl: url, fileType: file.type,
+        time: formatTime(new Date()),
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         reactions: [],
       };
-      appendMessageEl(area, tempMsg);
-      area.scrollTop = area.scrollHeight;
-    };
-    reader.readAsDataURL(file);
-  } else {
-    const tempMsg = {
-      id:        tempId,
-      sender:    state.currentUser.name,
-      color:     state.currentUser.color,
-      text:      caption,
-      file:      file.name,
-      fileUrl:   null,
-      fileType:  file.type,
-      time:      formatTime(new Date()),
-      timestamp: { toDate: function() { return new Date(); } },
-      reactions: [],
-    };
-    appendMessageEl(area, tempMsg);
-    area.scrollTop = area.scrollHeight;
-  }
 
-  // Upload to Firebase Storage
-  try {
-    const path = 'uploads/' + state.currentChannel + '/' + Date.now() + '_' + file.name;
-    const ref  = storage.ref(path);
+      // Attach quote only to first file
+      if (i === 0 && state.quoteMsg) {
+        firestoreMsg.quoteId     = state.quoteMsg.id || '';
+        firestoreMsg.quoteSender = state.quoteMsg.sender || '';
+        firestoreMsg.quoteText   = (state.quoteMsg.text || '').slice(0, 200);
+        cancelQuote();
+      }
 
-    // Show upload progress in the temp element
-    var tempEl2 = document.querySelector('[data-msg-id="' + tempId + '"]');
-    if (tempEl2) tempEl2.style.opacity = '0.5';
+      await db.collection('channels').doc(state.currentChannel).collection('messages').add(firestoreMsg);
 
-    await ref.put(file);
-    const url  = await ref.getDownloadURL();
-
-    // Remove temp message — onSnapshot will render the real one
-    var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
-    if (tempEl) tempEl.remove();
-
-    // Build message — include caption and quote if set
-    var firestoreMsg = {
-      sender:    state.currentUser.name,
-      color:     state.currentUser.color,
-      text:      caption,
-      file:      file.name,
-      fileUrl:   url,
-      fileType:  file.type,
-      time:      formatTime(new Date()),
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      reactions: [],
-    };
-
-    if (state.quoteMsg) {
-      firestoreMsg.quoteId     = state.quoteMsg.id || '';
-      firestoreMsg.quoteSender = state.quoteMsg.sender || '';
-      firestoreMsg.quoteText   = (state.quoteMsg.text || '').slice(0, 200);
-      cancelQuote();
-    }
-
-    await db.collection('channels').doc(state.currentChannel).collection('messages').add(firestoreMsg);
-
-  } catch (err) {
-    var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
-    if (tempEl) tempEl.remove();
-    console.error('Upload error:', err);
-    if (err.code === 'storage/unauthorized') {
-      alert('Upload failed: Storage permission denied.\n\nGo to Firebase Console → Storage → Rules and set:\nallow read, write: if true;');
-    } else if (err.code === 'storage/unknown' || err.message.includes('CORS')) {
-      alert('Upload failed: CORS or network error. Check Firebase Storage is enabled for this project.');
-    } else {
-      alert('Upload failed: ' + (err.message || err.code || err));
+    } catch (err) {
+      var tel2 = document.querySelector('[data-msg-id="' + tempId + '"]');
+      if (tel2) tel2.remove();
+      console.error('Upload error:', err);
+      if (err.code === 'storage/unauthorized') {
+        alert('Upload failed: Storage permission denied.\n\nGo to Firebase Console → Storage → Rules and set:\nallow read, write: if true;');
+      } else {
+        alert('Upload failed: ' + (err.message || err.code || err));
+      }
     }
   }
 }
@@ -1926,6 +2019,25 @@ document.addEventListener('DOMContentLoaded', function() {
       setTimeout(function() {
         inputBar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }, 100);
+    });
+  }
+
+  // DRAG-AND-DROP image onto the chat area
+  var main = document.querySelector('.main');
+  if (main) {
+    main.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      main.classList.add('drag-over');
+    });
+    main.addEventListener('dragleave', function(e) {
+      if (!main.contains(e.relatedTarget)) main.classList.remove('drag-over');
+    });
+    main.addEventListener('drop', function(e) {
+      e.preventDefault();
+      main.classList.remove('drag-over');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      addFilesToPending(files);
     });
   }
 });
