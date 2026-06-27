@@ -59,6 +59,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Start notification listeners for all channels
   setTimeout(startNotifListeners, 1500);
 
+  // Start listening for incoming video calls
+  setTimeout(startIncomingCallListener, 2000);
+
   // Users listener
   state.unsubscribeUsers = db.collection('users').orderBy('name')
     .onSnapshot(function(snap) {
@@ -1739,22 +1742,654 @@ async function markOffline() {
   }
 }
 
-// VIDEO CALL
-function openVideoCall() {
+// ══════════════════════════════════════════════════════════════
+//  RINGTONE  —  Web Audio API (no audio files needed)
+// ══════════════════════════════════════════════════════════════
+var _ring = {
+  ctx:        null,   // AudioContext
+  gainNode:   null,
+  oscillators: [],
+  timer:      null,
+  playing:    false,
+};
+
+function _ringGetCtx() {
+  if (!_ring.ctx) {
+    _ring.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Resume if suspended (browser autoplay policy)
+  if (_ring.ctx.state === 'suspended') _ring.ctx.resume();
+  return _ring.ctx;
+}
+
+function _ringStop() {
+  if (_ring.timer)  { clearTimeout(_ring.timer); _ring.timer = null; }
+  _ring.oscillators.forEach(function(o) { try { o.stop(); o.disconnect(); } catch(e){} });
+  _ring.oscillators = [];
+  if (_ring.gainNode) { try { _ring.gainNode.disconnect(); } catch(e){} _ring.gainNode = null; }
+  _ring.playing = false;
+}
+
+// Play a short tone burst: freqs[] = chord, duration ms, volume 0-1
+function _ringBurst(freqs, duration, volume) {
+  var ctx  = _ringGetCtx();
+  var gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.02);
+  gain.gain.setValueAtTime(volume, ctx.currentTime + duration / 1000 - 0.05);
+  gain.gain.linearRampToValueAtTime(0, ctx.currentTime + duration / 1000);
+  gain.connect(ctx.destination);
+  _ring.gainNode = gain;
+
+  freqs.forEach(function(freq) {
+    var osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + duration / 1000);
+    _ring.oscillators.push(osc);
+  });
+}
+
+// ── Outgoing ring (caller) — plays only after callee receives the call ──
+function _ringStartOutgoing() {
+  _ringStop();
+  _ring.playing = true;
+
+  function doBeep() {
+    if (!_ring.playing) return;
+    _ringStop();
+    _ring.playing = true;
+    _ringBurst([440, 480], 400, 0.18);
+    _ring.timer = setTimeout(function() {
+      if (!_ring.playing) return;
+      _ringStop();
+      _ring.playing = true;
+      _ringBurst([440, 480], 400, 0.18);
+      _ring.timer = setTimeout(doBeep, 2200);
+    }, 600);
+  }
+
+  doBeep();
+}
+
+// ── Incoming ring (callee) — ascending two-tone ring ─────────
+// Sounds like a classic phone ring
+function _ringStartIncoming() {
+  _ringStop();
+  _ring.playing = true;
+
+  function doRing() {
+    if (!_ring.playing) return;
+    _ringStop();
+    _ring.playing = true;
+    // Ring: 523 Hz (C5) + 659 Hz (E5) — pleasant two-tone
+    _ringBurst([523, 659], 600, 0.22);
+    _ring.timer = setTimeout(function() {
+      if (!_ring.playing) return;
+      _ringStop();
+      _ring.playing = true;
+      _ringBurst([523, 659], 600, 0.22);
+      // Gap then repeat
+      _ring.timer = setTimeout(doRing, 2000);
+    }, 800);
+  }
+
+  doRing();
+}
+
+
+var _vc = {
+  pc:            null,   // RTCPeerConnection
+  localStream:   null,   // MediaStream (own camera+mic)
+  callDocId:     null,   // Firestore call doc id
+  role:          null,   // 'caller' | 'callee'
+  micOn:         true,
+  camOn:         true,
+  unsubOffer:    null,
+  unsubAnswer:   null,
+  unsubCandCaller: null,
+  unsubCandCallee: null,
+  unsubIncoming: null,   // listener for incoming calls
+  incomingCallId: null,
+  ringtoneTimer: null,
+};
+
+// STUN servers — free Google STUN + TURN fallback via Open Relay
+var _iceServers = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // open TURN relay for cross-NAT connections
+    {
+      urls:       'turn:openrelay.metered.ca:80',
+      username:   'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls:       'turn:openrelay.metered.ca:443',
+      username:   'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls:       'turn:openrelay.metered.ca:443?transport=tcp',
+      username:   'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ]
+};
+
+// ── helpers ──────────────────────────────────────────────────
+function _vcStatus(msg) {
+  var el = document.getElementById('callStatusBar');
+  if (el) el.textContent = msg;
+}
+
+function _vcShowLocalVideo(stream) {
+  var vid = document.getElementById('localVideo');
+  var ph  = document.getElementById('localPlaceholder');
+  if (vid) { vid.srcObject = stream; vid.classList.add('active'); }
+  if (ph)  ph.style.display = 'none';
+}
+
+function _vcShowRemoteVideo(stream) {
+  var vid = document.getElementById('remoteVideo');
+  var ph  = document.getElementById('remotePlaceholder');
+  if (vid) { vid.srcObject = stream; vid.classList.add('active'); }
+  if (ph)  ph.style.display = 'none';
+}
+
+function _vcHideRemoteVideo() {
+  var vid = document.getElementById('remoteVideo');
+  var ph  = document.getElementById('remotePlaceholder');
+  if (vid) { vid.srcObject = null; vid.classList.remove('active'); }
+  if (ph)  ph.style.display = '';
+}
+
+function _vcSetRemoteLabel(txt) {
+  var el = document.getElementById('remoteLabel');
+  if (el) el.textContent = txt;
+}
+
+// ── create RTCPeerConnection ─────────────────────────────────
+function _vcCreatePC() {
+  if (_vc.pc) { try { _vc.pc.close(); } catch(e){} }
+  var pc = new RTCPeerConnection(_iceServers);
+
+  // Add local tracks
+  if (_vc.localStream) {
+    _vc.localStream.getTracks().forEach(function(t) { pc.addTrack(t, _vc.localStream); });
+  }
+
+  // Receive remote tracks
+  pc.ontrack = function(e) {
+    var remoteStream = e.streams[0];
+    if (remoteStream) {
+      _vcShowRemoteVideo(remoteStream);
+      _vcStatus('Connected ✅');
+    }
+  };
+
+  // Send ICE candidates to Firestore
+  pc.onicecandidate = function(e) {
+    if (!e.candidate || !_vc.callDocId) return;
+    var col = _vc.role === 'caller' ? 'callerCandidates' : 'calleeCandidates';
+    db.collection('calls').doc(_vc.callDocId)
+      .collection(col).add(e.candidate.toJSON())
+      .catch(function(){});
+  };
+
+  pc.onconnectionstatechange = function() {
+    var s = pc.connectionState;
+    _vcStatus('Connection: ' + s);
+    if (s === 'connected')     _vcStatus('Connected ✅');
+    if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+      _vcStatus('Call ended');
+      _vcHideRemoteVideo();
+    }
+  };
+
+  pc.oniceconnectionstatechange = function() {
+    if (pc.iceConnectionState === 'disconnected') {
+      _vcStatus('Peer disconnected');
+      _vcHideRemoteVideo();
+    }
+  };
+
+  _vc.pc = pc;
+  return pc;
+}
+
+// ── get camera + mic ─────────────────────────────────────────
+async function _vcGetMedia() {
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    _vc.localStream = stream;
+    _vcShowLocalVideo(stream);
+    return stream;
+  } catch(err) {
+    // Try audio only if camera denied
+    try {
+      var audioOnly = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      _vc.localStream = audioOnly;
+      _vcStatus('Camera unavailable — audio only');
+      return audioOnly;
+    } catch(e) {
+      _vcStatus('Could not access camera or microphone');
+      return null;
+    }
+  }
+}
+
+// ── OPEN CALL (caller side) ──────────────────────────────────
+async function openVideoCall() {
+  var targetName = null;
+
+  if (state.currentChannel && state.currentChannel.startsWith('dm-')) {
+    // In a DM — extract the other user's name from the channel id
+    var mySlug = state.currentUser.name.toLowerCase().replace(/[\s.]+/g, '_');
+    var parts = state.currentChannel.replace('dm-', '').split('-');
+    var otherSlug = parts.filter(function(p) { return p !== mySlug; }).join('-');
+    var matched = _lastKnownUsers.find(function(u) {
+      return u.name.toLowerCase().replace(/[\s.]+/g, '_') === otherSlug;
+    });
+    targetName = matched ? matched.name : otherSlug;
+
+    // Check if the target user is online before calling
+    var targetUser = _lastKnownUsers.find(function(u) { return u.name === targetName; });
+    var targetStatus = targetUser ? (targetUser.status || 'offline') : 'offline';
+
+    if (targetStatus === 'offline') {
+      if (!confirm(targetName + ' is currently offline.\nCall anyway? They may not answer.')) return;
+    } else if (targetStatus === 'busy') {
+      if (!confirm(targetName + ' is set to Busy.\nCall anyway?')) return;
+    }
+
+    _startCall(targetName);
+  } else {
+    // In a channel — show a picker to choose who to call
+    _showCallPickerModal();
+  }
+}
+
+// Show a modal to pick who to call when not in a DM
+function _showCallPickerModal() {
+  var others = _lastKnownUsers.filter(function(u) {
+    return u.name !== state.currentUser.name;
+  });
+
+  if (others.length === 0) {
+    alert('No other users to call.');
+    return;
+  }
+
+  // Sort: online first, then away/busy, then offline
+  var statusOrder = { online: 0, away: 1, busy: 2, offline: 3 };
+  others.sort(function(a, b) {
+    var sa = statusOrder[a.status || 'offline'] || 3;
+    var sb = statusOrder[b.status || 'offline'] || 3;
+    if (sa !== sb) return sa - sb;
+    return a.name.localeCompare(b.name);
+  });
+
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay show';
+  overlay.id = 'callPickerModal';
+
+  var rows = others.map(function(u) {
+    var st       = u.status || 'offline';
+    var isOffline = st === 'offline';
+    var isBusy    = st === 'busy';
+    var stColor   = statusColor(st);
+    var stLabel   = st.charAt(0).toUpperCase() + st.slice(1);
+    var dimStyle  = isOffline ? 'opacity:0.45;' : '';
+    var titleAttr = isOffline ? ' title="' + escapeHtml(u.name) + ' is offline"'
+                  : isBusy    ? ' title="' + escapeHtml(u.name) + ' is busy — call anyway?"'
+                  : '';
+
+    return '<div class="new-dm-row call-picker-row" ' +
+        'onclick="_pickCallTarget(\'' + escapeHtml(u.name) + '\')" ' +
+        'style="cursor:pointer;' + dimStyle + '"' + titleAttr + '>' +
+      '<div class="user-avatar" style="background:' + u.color + ';width:30px;height:30px;font-size:13px;flex-shrink:0;position:relative;">' +
+        u.name[0] +
+        '<span style="position:absolute;bottom:0;right:0;width:9px;height:9px;border-radius:50%;background:' + stColor + ';border:1.5px solid #1a1a2e;"></span>' +
+      '</div>' +
+      '<span style="flex:1;font-size:13px;">' + escapeHtml(u.name) + '</span>' +
+      '<span style="font-size:11px;color:' + stColor + ';font-weight:500;">' + stLabel + '</span>' +
+    '</div>';
+  }).join('');
+
+  overlay.innerHTML =
+    '<div class="modal-box" style="width:min(320px,calc(100vw - 24px))">' +
+      '<h3>📹 Video Call</h3>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Choose someone to call</p>' +
+      '<div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;">' +
+        rows +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn cancel" onclick="document.getElementById(\'callPickerModal\').remove()">Cancel</button>' +
+      '</div>' +
+    '</div>';
+
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function _pickCallTarget(name) {
+  var user = _lastKnownUsers.find(function(u) { return u.name === name; });
+  var st   = user ? (user.status || 'offline') : 'offline';
+
+  if (st === 'offline') {
+    if (!confirm(name + ' is offline.\nCall anyway? They may not answer.')) return;
+  } else if (st === 'busy') {
+    if (!confirm(name + ' is set to Busy.\nCall anyway?')) return;
+  }
+
+  var modal = document.getElementById('callPickerModal');
+  if (modal) modal.remove();
+  _startCall(name);
+}
+
+async function _startCall(targetName) {
   document.getElementById('callModal').classList.add('show');
-  setTimeout(function() {
-    document.getElementById('callStatus').textContent  = 'Connected';
-    document.getElementById('remoteLabel').textContent = 'Waiting for others to join...';
-  }, 2000);
+  document.getElementById('callTitle').textContent = '📹 Video Call' + (targetName ? ' with ' + targetName : '');
+  _vcSetRemoteLabel(targetName || 'Waiting...');
+  _vcStatus('Starting camera...');
+  _vcHideRemoteVideo();
+
+  // Reset placeholder for local video
+  var ph = document.getElementById('localPlaceholder');
+  if (ph) ph.style.display = '';
+  var lv = document.getElementById('localVideo');
+  if (lv) { lv.classList.remove('active'); lv.srcObject = null; }
+
+  await _vcGetMedia();
+  if (!_vc.localStream) return; // permission denied
+
+  _vc.role = 'caller';
+  var pc = _vcCreatePC();
+
+  // Create Firestore signaling doc
+  var callDoc = db.collection('calls').doc();
+  _vc.callDocId = callDoc.id;
+
+  var offerDesc = await pc.createOffer();
+  await pc.setLocalDescription(offerDesc);
+
+  var callData = {
+    offer: { type: offerDesc.type, sdp: offerDesc.sdp },
+    caller: state.currentUser.name,
+    callee: targetName || null,
+    status: 'calling',
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  await callDoc.set(callData);
+
+  _vcStatus('Calling' + (targetName ? ' ' + targetName : '') + '...');
+
+  // Listen for callee ICE candidates
+  var _pendingCalleeCands = [];
+  _vc.unsubCandCallee = callDoc.collection('calleeCandidates').onSnapshot(function(snap) {
+    snap.docChanges().forEach(async function(change) {
+      if (change.type === 'added') {
+        if (pc.remoteDescription) {
+          var cand = new RTCIceCandidate(change.doc.data());
+          await pc.addIceCandidate(cand).catch(console.error);
+        } else {
+          _pendingCalleeCands.push(change.doc.data());
+        }
+      }
+    });
+  });
+
+  // Listen for answer + drain pending ICE candidates after remote description is set
+  _vc.unsubAnswer = callDoc.onSnapshot(async function(snap) {
+    var data = snap.data();
+    if (!data) return;
+
+    // Callee's device received the call — start ringing for the caller
+    if (data.status === 'ringing' && !_ring.playing) {
+      _ringStartOutgoing();
+    }
+
+    if (data.status === 'declined') {
+      _vcStatus('Call declined ❌');
+      _ringStop();
+      return;
+    }
+    if (data.answer && !pc.currentRemoteDescription) {
+      var answerDesc = new RTCSessionDescription(data.answer);
+      await pc.setRemoteDescription(answerDesc).catch(console.error);
+      _ringStop(); // callee answered — stop caller's ringtone
+      _vcStatus('Connected ✅');
+      _vcSetRemoteLabel(data.callee || 'Remote');
+      // Drain any queued candidates
+      for (var i = 0; i < _pendingCalleeCands.length; i++) {
+        await pc.addIceCandidate(new RTCIceCandidate(_pendingCalleeCands[i])).catch(console.error);
+      }
+      _pendingCalleeCands = [];
+    }
+  });
 }
-function closeCall() { document.getElementById('callModal').classList.remove('show'); }
-function toggleMic(btn) {
-  btn.classList.toggle('muted');
-  btn.textContent = btn.classList.contains('muted') ? '🔇' : '🎤';
+
+// ── ANSWER CALL (callee side) ────────────────────────────────
+async function answerCall() {
+  var callId = _vc.incomingCallId;
+  var callerName = document.getElementById('incomingCallerName').textContent;
+  hideIncomingCallBar();
+
+  document.getElementById('callModal').classList.add('show');
+  document.getElementById('callTitle').textContent = '📹 Call with ' + callerName;
+  _vcSetRemoteLabel(callerName);
+  _vcStatus('Starting camera...');
+  _vcHideRemoteVideo();
+
+  var ph = document.getElementById('localPlaceholder');
+  if (ph) ph.style.display = '';
+  var lv = document.getElementById('localVideo');
+  if (lv) { lv.classList.remove('active'); lv.srcObject = null; }
+
+  await _vcGetMedia();
+  if (!_vc.localStream) return;
+
+  _vc.role = 'callee';
+  _vc.callDocId = callId;
+  var pc = _vcCreatePC();
+  var callDoc = db.collection('calls').doc(callId);
+
+  // Get offer
+  var callData = (await callDoc.get()).data();
+  if (!callData || !callData.offer) { _vcStatus('Call no longer available'); return; }
+
+  await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
+
+  var answerDesc = await pc.createAnswer();
+  await pc.setLocalDescription(answerDesc);
+
+  await callDoc.update({
+    answer: { type: answerDesc.type, sdp: answerDesc.sdp },
+    status: 'answered'
+  });
+
+  _vcStatus('Connecting...');
+
+  // Listen for caller ICE candidates
+  _vc.unsubCandCaller = callDoc.collection('callerCandidates').onSnapshot(function(snap) {
+    snap.docChanges().forEach(async function(change) {
+      if (change.type === 'added' && pc.remoteDescription) {
+        var cand = new RTCIceCandidate(change.doc.data());
+        await pc.addIceCandidate(cand).catch(console.error);
+      }
+    });
+  });
 }
-function toggleCam(btn) {
-  btn.classList.toggle('cam-off');
-  btn.textContent = btn.classList.contains('cam-off') ? '🚫' : '📷';
+
+// ── INCOMING CALL LISTENER ───────────────────────────────────
+function startIncomingCallListener() {
+  if (_vc.unsubIncoming) return; // already listening
+
+  // Single-field query on 'callee' — no composite index needed.
+  // Filter status client-side to keep it simple.
+  _vc.unsubIncoming = db.collection('calls')
+    .where('callee', '==', state.currentUser.name)
+    .onSnapshot(function(snap) {
+      snap.docChanges().forEach(function(change) {
+        var data = change.doc.data();
+
+        if (change.type === 'added' && data.status === 'calling') {
+          // Don't pop if already in a call
+          if (document.getElementById('callModal').classList.contains('show')) return;
+          _vc.incomingCallId = change.doc.id;
+          showIncomingCallBar(data.caller, change.doc.id);
+        }
+
+        if (change.type === 'modified') {
+          if (data.status !== 'calling' && _vc.incomingCallId === change.doc.id) {
+            hideIncomingCallBar();
+          }
+        }
+
+        if (change.type === 'removed') {
+          if (_vc.incomingCallId === change.doc.id) {
+            hideIncomingCallBar();
+          }
+        }
+      });
+    }, function(err) {
+      console.warn('Incoming call listener error:', err.message);
+      // Fallback to polling if real-time listener fails
+      _vcStartPollingForCalls();
+    });
+}
+
+// Fallback polling (used if real-time listener fails)
+var _vcPollTimer = null;
+var _vcSeenCallIds = new Set();
+
+function _vcStartPollingForCalls() {
+  if (_vcPollTimer) return; // already polling
+  console.warn('Falling back to polling for incoming calls');
+
+  _vcPollTimer = setInterval(async function() {
+    if (document.getElementById('callModal').classList.contains('show')) return;
+    try {
+      var snap = await db.collection('calls')
+        .where('callee', '==', state.currentUser.name)
+        .where('status', '==', 'calling')
+        .get();
+
+      snap.docs.forEach(function(d) {
+        if (_vcSeenCallIds.has(d.id)) return;
+        _vcSeenCallIds.add(d.id);
+        _vc.incomingCallId = d.id;
+        showIncomingCallBar(d.data().caller, d.id);
+      });
+
+      // Hide bar if call is no longer active
+      if (_vc.incomingCallId) {
+        var stillCalling = snap.docs.some(function(d) { return d.id === _vc.incomingCallId; });
+        if (!stillCalling) hideIncomingCallBar();
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+function showIncomingCallBar(callerName, callId) {
+  _vc.incomingCallId = callId;
+  document.getElementById('incomingCallerName').textContent = callerName;
+  document.getElementById('incomingCallBar').style.display = 'flex';
+  _ringStartIncoming(); // play incoming ringtone on callee's device
+  // Tell the caller that this device received the call — so their ringtone starts
+  db.collection('calls').doc(callId).update({ status: 'ringing' }).catch(function(){});
+}
+
+function hideIncomingCallBar() {
+  document.getElementById('incomingCallBar').style.display = 'none';
+  _vc.incomingCallId = null;
+  _ringStop(); // stop incoming ringtone
+}
+
+function declineCall() {
+  var callId = _vc.incomingCallId;
+  hideIncomingCallBar();
+  if (callId) {
+    db.collection('calls').doc(callId).update({ status: 'declined' }).catch(function(){});
+  }
+}
+
+// ── CLOSE CALL ───────────────────────────────────────────────
+function closeCall() {
+  document.getElementById('callModal').classList.remove('show');
+  _ringStop(); // stop any ringtone (outgoing or incoming)
+
+  // Stop local stream tracks
+  if (_vc.localStream) {
+    _vc.localStream.getTracks().forEach(function(t) { t.stop(); });
+    _vc.localStream = null;
+  }
+
+  // Close peer connection
+  if (_vc.pc) {
+    try { _vc.pc.close(); } catch(e) {}
+    _vc.pc = null;
+  }
+
+  // Unsubscribe Firestore listeners
+  if (_vc.unsubAnswer)     { _vc.unsubAnswer();     _vc.unsubAnswer = null; }
+  if (_vc.unsubCandCaller) { _vc.unsubCandCaller(); _vc.unsubCandCaller = null; }
+  if (_vc.unsubCandCallee) { _vc.unsubCandCallee(); _vc.unsubCandCallee = null; }
+
+  // Mark call as ended in Firestore
+  if (_vc.callDocId) {
+    db.collection('calls').doc(_vc.callDocId)
+      .update({ status: 'ended' })
+      .catch(function(){});
+    _vc.callDocId = null;
+  }
+
+  _vc.role   = null;
+  _vc.micOn  = true;
+  _vc.camOn  = true;
+
+  // Reset UI
+  var lv = document.getElementById('localVideo');
+  var rv = document.getElementById('remoteVideo');
+  if (lv) { lv.srcObject = null; lv.classList.remove('active'); }
+  if (rv) { rv.srcObject = null; rv.classList.remove('active'); }
+  var lph = document.getElementById('localPlaceholder');
+  var rph = document.getElementById('remotePlaceholder');
+  if (lph) lph.style.display = '';
+  if (rph) rph.style.display = '';
+  var micBtn = document.getElementById('micBtn');
+  var camBtn = document.getElementById('camBtn');
+  if (micBtn) { micBtn.textContent = '🎤'; micBtn.classList.remove('muted'); }
+  if (camBtn) { camBtn.textContent = '📷'; camBtn.classList.remove('cam-off'); }
+  _vcStatus('');
+}
+
+// ── TOGGLE MIC / CAM ────────────────────────────────────────
+function toggleMic() {
+  var btn = document.getElementById('micBtn');
+  if (!_vc.localStream) return;
+  _vc.micOn = !_vc.micOn;
+  _vc.localStream.getAudioTracks().forEach(function(t) { t.enabled = _vc.micOn; });
+  if (btn) {
+    btn.textContent = _vc.micOn ? '🎤' : '🔇';
+    btn.classList.toggle('muted', !_vc.micOn);
+  }
+}
+
+function toggleCam() {
+  var btn = document.getElementById('camBtn');
+  if (!_vc.localStream) return;
+  _vc.camOn = !_vc.camOn;
+  _vc.localStream.getVideoTracks().forEach(function(t) { t.enabled = _vc.camOn; });
+  if (btn) {
+    btn.textContent = _vc.camOn ? '📷' : '🚫';
+    btn.classList.toggle('cam-off', !_vc.camOn);
+  }
 }
 
 // UTILS

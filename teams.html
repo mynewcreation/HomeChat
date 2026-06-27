@@ -209,22 +209,37 @@
       <span class="close-btn" onclick="closeCall()">✕</span>
     </div>
     <div class="call-area">
-      <div class="video-box main-video">
-        <span>📹</span>
-        <p>Your Camera</p>
-        <small id="callStatus">Connecting...</small>
+      <div class="video-box main-video" id="localVideoBox">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div class="video-label">You</div>
+        <div class="video-placeholder" id="localPlaceholder">
+          <span>📹</span>
+          <p id="callStatus">Starting camera...</p>
+        </div>
       </div>
-      <div class="video-box remote-video">
-        <span>👤</span>
-        <p id="remoteLabel">Waiting for others...</p>
+      <div class="video-box remote-video" id="remoteVideoBox">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <div class="video-label" id="remoteLabel">Waiting...</div>
+        <div class="video-placeholder" id="remotePlaceholder">
+          <span>👤</span>
+          <p id="remotePlaceholderText">Waiting for others...</p>
+        </div>
       </div>
     </div>
+    <div id="callStatusBar" class="call-status-bar">Initializing...</div>
     <div class="call-controls">
-      <button class="call-btn" onclick="toggleMic(this)" title="Mute">🎤</button>
+      <button class="call-btn" id="micBtn" onclick="toggleMic()" title="Mute">🎤</button>
       <button class="call-btn end-call" onclick="closeCall()" title="End Call">📵</button>
-      <button class="call-btn" onclick="toggleCam(this)" title="Camera">📷</button>
+      <button class="call-btn" id="camBtn" onclick="toggleCam()" title="Camera">📷</button>
     </div>
   </div>
+</div>
+
+<!-- INCOMING CALL NOTIFICATION -->
+<div class="incoming-call-bar" id="incomingCallBar" style="display:none">
+  <span>📞 <strong id="incomingCallerName"></strong> is calling...</span>
+  <button class="call-btn-sm accept" onclick="answerCall()">✅ Answer</button>
+  <button class="call-btn-sm decline" onclick="declineCall()">❌ Decline</button>
 </div>
 
 <!-- CHANNEL MANAGE MODAL -->
