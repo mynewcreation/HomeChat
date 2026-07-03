@@ -806,17 +806,19 @@ function _getMsgActionsBar() {
     document.addEventListener('mousedown', function(e) {
       if (e.button === 2) return; // right-click — contextmenu will handle it
       if (_justOpenedMsgActions) { _justOpenedMsgActions = false; return; }
-      if (!e.target.closest('#globalMsgActionsBar') && !e.target.closest('#globalDelMenu')) {
-        hideMsgActionsBar();
-      }
+      // Don't close if clicking inside the action bar or the emoji picker
+      if (e.target.closest('#globalMsgActionsBar') ||
+          e.target.closest('#globalDelMenu') ||
+          e.target.closest('#msgEmojiPicker')) return;
+      hideMsgActionsBar();
     });
     // Mobile: close on tap outside the bar
     document.addEventListener('touchstart', function(e) {
       if (!_msgActionsBar || !_msgActionsBar.classList.contains('actions-open')) return;
-      if (!e.target.closest('#globalMsgActionsBar') && !e.target.closest('#globalDelMenu')) {
-        // Small delay so the tap doesn't also re-open via long-press timer
-        setTimeout(hideMsgActionsBar, 10);
-      }
+      if (e.target.closest('#globalMsgActionsBar') ||
+          e.target.closest('#globalDelMenu') ||
+          e.target.closest('#msgEmojiPicker')) return;
+      setTimeout(hideMsgActionsBar, 10);
     }, { passive: true });
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') hideMsgActionsBar();
@@ -829,8 +831,109 @@ function hideMsgActionsBar() {
   var bar = _msgActionsBar;
   if (!bar) return;
   bar.classList.remove('actions-open');
-  // Also close any open del-menu inside it
   bar.querySelectorAll('.del-menu.show').forEach(function(m) { m.classList.remove('show'); });
+  closeMsgEmojiPicker();
+}
+
+// ── MORE EMOJI PICKER ────────────────────────────────────────
+var _msgEmojiPicker = null;
+
+var _allReactEmoji = [
+  '😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','🥰','😘',
+  '😗','🙂','🤗','🤩','🤔','😐','😶','🙄','😏','😣','😥','😮','😯','😪','😫',
+  '😴','😌','😛','😜','😝','😒','😓','😔','😕','🙃','😲','☹️','😖','😞','😟',
+  '😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','😳','😵','😠','😡',
+  '🤬','😷','🤒','🤕','🤢','🤮','🤧','🥳','🥺','🥴',
+  '👍','👎','👏','🙌','🤝','🙏','✌️','🤞','🤟','🤘','👌','🤌','👈','👉',
+  '👆','👇','☝️','✋','🤚','🖐️','💪','🫂',
+  '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓',
+  '💗','💖','💘','💝','💯','🔥','⭐','✨','💫','🎉','🎊','🎈','🎁','🏆',
+  '👑','💎','🌈','☀️','🌙','⚡','❄️','🌸','🌹','🍀','🎵','🎶',
+  '🍕','🍔','🍟','🌮','🍜','🍣','🍰','🎂','🍫','🍬','🍭','☕','🧋','🍺','🥂',
+  '🐶','🐱','🐰','🦊','🐻','🐼','🐸','🦋','🐙',
+];
+
+function toggleMsgEmojiPicker(anchorBtn, msgId) {
+  // Toggle off if already open
+  if (_msgEmojiPicker) { closeMsgEmojiPicker(); return; }
+
+  var picker = document.createElement('div');
+  picker.id = 'msgEmojiPicker';
+  picker.innerHTML =
+    '<input id="mepSearch" type="text" placeholder="🔍 Search..." autocomplete="off">' +
+    '<div id="mepGrid">' +
+      _allReactEmoji.map(function(em, i) {
+        return '<span class="mep-em" data-idx="' + i + '">' + em + '</span>';
+      }).join('') +
+    '</div>';
+  document.body.appendChild(picker);
+  _msgEmojiPicker = picker;
+
+  // Search
+  var inp  = picker.querySelector('#mepSearch');
+  var grid = picker.querySelector('#mepGrid');
+  inp.addEventListener('input', function() {
+    var q = this.value.trim();
+    grid.querySelectorAll('.mep-em').forEach(function(el) {
+      var em = _allReactEmoji[parseInt(el.dataset.idx, 10)];
+      el.style.display = (!q || em.includes(q)) ? '' : 'none';
+    });
+  });
+  inp.addEventListener('keydown', function(e) { e.stopPropagation(); });
+
+  // Emoji click — use index to get the original emoji from the array (avoids HTML encoding issues)
+  grid.querySelectorAll('.mep-em').forEach(function(el) {
+    el.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var emoji = _allReactEmoji[parseInt(el.dataset.idx, 10)];
+      closeMsgEmojiPicker();
+      hideMsgActionsBar();
+      if (emoji && msgId) reactTo(msgId, emoji);
+    });
+  });
+
+  // Position: above the action bar aligned to anchor button
+  picker.style.visibility = 'hidden';
+  var pw = picker.offsetWidth  || 280;
+  var ph = picker.offsetHeight || 260;
+  picker.style.visibility = '';
+
+  var vw  = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+  var vh  = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  var bar = _msgActionsBar;
+  var barRect = bar ? bar.getBoundingClientRect() : null;
+  var btnRect = anchorBtn ? anchorBtn.getBoundingClientRect() : null;
+  var mg  = 8;
+
+  var x = btnRect ? btnRect.left : (barRect ? barRect.left : mg);
+  var y = barRect ? (barRect.top - ph - mg) : (btnRect ? (btnRect.top - ph - mg) : mg);
+
+  if (y < mg) y = (barRect ? barRect.bottom : (btnRect ? btnRect.bottom : 0)) + mg;
+  if (x + pw > vw - mg) x = vw - pw - mg;
+  if (x < mg) x = mg;
+
+  picker.style.left = x + 'px';
+  picker.style.top  = y + 'px';
+
+  setTimeout(function() { inp.focus(); }, 40);
+
+  // Close on outside click/tap
+  setTimeout(function() {
+    function outside(e) {
+      if (e.target === anchorBtn) return; // let the toggle handle it
+      if (_msgEmojiPicker && !_msgEmojiPicker.contains(e.target)) {
+        closeMsgEmojiPicker();
+        document.removeEventListener('mousedown', outside);
+        document.removeEventListener('touchstart', outside);
+      }
+    }
+    document.addEventListener('mousedown', outside);
+    document.addEventListener('touchstart', outside, { passive: true });
+  }, 0);
+}
+
+function closeMsgEmojiPicker() {
+  if (_msgEmojiPicker) { _msgEmojiPicker.remove(); _msgEmojiPicker = null; }
 }
 
 function showMsgActionsBar(clientX, clientY, msg, isMine) {
@@ -843,6 +946,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
     '<span class="ma-btn ma-btn-like  ma-act-like"  title="Like">'                 + svgR.like  + '</span>' +
     '<span class="ma-btn ma-btn-heart ma-act-heart" title="Love">'                 + svgR.heart + '</span>' +
     '<span class="ma-btn ma-btn-laugh ma-act-laugh" title="Haha">'                 + svgR.laugh + '</span>' +
+    (msg.id ? '<span class="ma-btn ma-act-more-emoji" title="More reactions" style="font-size:15px;font-weight:700;">＋</span>' : '') +
     (isMine && msg.id ? '<span class="ma-btn ma-act-edit" title="Edit">'           + svgR.edit  + '</span>' : '') +
     (msg.id
       ? '<span class="ma-btn ma-btn-danger del-wrap ma-act-delete" title="Delete">' +
@@ -859,6 +963,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
   var likeBtn     = bar.querySelector('.ma-act-like');
   var heartBtn    = bar.querySelector('.ma-act-heart');
   var laughBtn    = bar.querySelector('.ma-act-laugh');
+  var moreEmojiBtn= bar.querySelector('.ma-act-more-emoji');
   var editBtn     = bar.querySelector('.ma-act-edit');
   var deleteBtn   = bar.querySelector('.ma-act-delete');
   var delMenu     = bar.querySelector('.del-menu');
@@ -869,6 +974,10 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
   if (likeBtn)   likeBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '👍'); });
   if (heartBtn)  heartBtn.addEventListener('click',  function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '❤️'); });
   if (laughBtn)  laughBtn.addEventListener('click',  function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '😂'); });
+  if (moreEmojiBtn) moreEmojiBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    toggleMsgEmojiPicker(moreEmojiBtn, msg.id);
+  });
   if (editBtn)   editBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); startEdit(msg.id); });
   if (deleteBtn) deleteBtn.addEventListener('click', function(e) {
     e.stopPropagation();
