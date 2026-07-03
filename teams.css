@@ -328,9 +328,6 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* Extend hover zone downward to cover the floating action bar */
-  padding-bottom: 34px;
-  margin-bottom: -34px;
 }
 
 .msg-meta {
@@ -415,6 +412,10 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
+  /* Prevent native long-press text selection / callout on mobile */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .msg-group.mine .msg-bubble {
@@ -439,42 +440,24 @@ body {
   display: block;
 }
 
-/* msg-actions sits in a zero-height row below the bubble — no layout shift */
+/* msg-actions — fixed floating popup that appears at cursor position */
 .msg-actions {
   display: none;
-  position: absolute;
-  bottom: 0;           /* sits inside the padding-bottom zone, right under the bubble */
-  left: 0;
+  position: fixed;
   background: #22234a;
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 3px 5px;
   gap: 1px;
-  box-shadow: 0 3px 12px rgba(0,0,0,0.5);
-  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  z-index: 9000;
   align-items: center;
   white-space: nowrap;
   width: fit-content;
   height: 34px;
 }
 
-.msg-content:hover .msg-actions { display: flex; }
-.msg-actions:hover               { display: flex; }
-
-/* Own messages — right-aligned */
-.msg-group.mine .msg-actions { left: auto; right: 0; }
-
-/* Flip action bar ABOVE the bubble when near bottom of screen */
-.msg-content.flip-up .msg-actions {
-  bottom: auto;
-  top: 0;
-}
-.msg-content.flip-up {
-  padding-bottom: 0;
-  margin-bottom: 0;
-  padding-top: 34px;
-  margin-top: -34px;
-}
+.msg-actions.actions-open { display: flex; }
 
 /* SVG action button */
 .ma-btn {
@@ -525,8 +508,8 @@ body {
   z-index: 9999;
   white-space: nowrap;
 }
-/* When action bar is flipped above, dropdown also opens upward */
-.msg-content.flip-up .del-menu {
+/* When action bar is flipped above, dropdown also opens upward — kept for del-menu */
+.msg-actions.flip-up .del-menu {
   top: auto;
   bottom: calc(100% + 4px);
 }
@@ -1519,56 +1502,33 @@ body {
 
   .date-divider { font-size: 10px; margin: 4px 0; }
 
-  /* ── Message actions: tap to show, inline below bubble ── */
+  /* ── Message actions: fixed popup, shown on long-press ── */
   .msg-actions {
     display: none;
   }
+  .msg-actions.actions-open {
+    display: flex;
+    /* Bigger touch targets on mobile */
+    height: 44px;
+    padding: 4px 8px;
+    gap: 2px;
+    border-radius: 22px;
+  }
+  .msg-actions.actions-open .ma-btn {
+    width: 36px;
+    height: 36px;
+  }
+  .msg-actions.actions-open .ma-btn svg {
+    width: 16px;
+    height: 16px;
+  }
 
-  /* Reset the hover-extension padding on mobile — not needed since tap shows inline */
-  .msg-content,
-  .msg-content.flip-up {
+  /* Remove old padding hacks — no longer needed */
+  .msg-content {
     padding-bottom: 0;
     margin-bottom: 0;
     padding-top: 0;
     margin-top: 0;
-  }
-
-  .msg-content.actions-open .msg-actions {
-    display: flex;
-    position: static;
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 3px 0 2px 0;
-    gap: 2px;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    max-width: 100%;
-    overflow: hidden;
-    border-radius: 0;
-    margin-top: 2px;
-  }
-
-  .msg-group.mine .msg-content.actions-open .msg-actions {
-    justify-content: flex-end;
-  }
-
-  .msg-content.actions-open .msg-actions span,
-  .msg-content.actions-open .msg-actions .ma-btn {
-    font-size: 14px;
-    padding: 4px 5px;
-    border-radius: 6px;
-    min-width: 28px;
-    text-align: center;
-    background: rgba(255,255,255,0.08);
-    flex-shrink: 0;
-    width: 32px;
-    height: 32px;
-  }
-
-  .msg-content.actions-open .msg-actions span:active,
-  .msg-content.actions-open .msg-actions .ma-btn:active {
-    background: rgba(255,255,255,0.2);
   }
 
   /* ── Quote preview ── */

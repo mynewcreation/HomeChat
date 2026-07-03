@@ -585,6 +585,7 @@ function msgDateLabel(msg) {
 function renderMessages(msgs) {
   var area = document.getElementById('messagesArea');
   var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 60;
+
   area.innerHTML = '';
 
   if (!msgs || msgs.length === 0) {
@@ -683,43 +684,12 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
     return '<span class="reaction-chip' + (reacted ? ' reacted' : '') + '" onclick="addReaction(\'' + msg.id + '\',\'' + r.emoji + '\')" title="' + (reacted ? 'Remove reaction' : 'Add reaction') + '">' + r.emoji + ' ' + r.count + '</span>';
   }).join('');
 
-  // Actions: SVG icons
-  var svgReply  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>';
-  var svgLike   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>';
-  var svgHeart  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>';
-  var svgLaugh  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>';
-  var svgEdit   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
-  var svgDelete = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
-
-  const quoteAction  = msg.id
-    ? '<span class="ma-btn" onclick="quoteMessage(\'' + msg.id + '\')" title="Reply">' + svgReply + '</span>'
-    : '';
-  const editAction   = isMine && msg.id
-    ? '<span class="ma-btn" onclick="startEdit(\'' + msg.id + '\')" title="Edit">' + svgEdit + '</span>'
-    : '';
-
-  // Delete actions — everyone gets the dropdown: "Delete for Everyone" (own msgs only) + "Delete for Me"
-  var deleteAction = '';
-  if (msg.id) {
-    var deleteEveryoneItem = isMine
-      ? '<div onclick="event.stopPropagation();closeDeleteMenu();deleteMsg(\'' + msg.id + '\')"><span style="font-size:11px">🗑️</span> Delete for Everyone</div>'
-      : '';
-    deleteAction =
-      '<span class="ma-btn ma-btn-danger del-wrap" title="Delete" onclick="toggleDeleteMenu(\'' + msg.id + '\',event)">' +
-        svgDelete +
-        '<div class="del-menu" id="delmenu-' + msg.id + '">' +
-          deleteEveryoneItem +
-          '<div onclick="event.stopPropagation();closeDeleteMenu();deleteForMe(\'' + msg.id + '\')"><span style="font-size:11px">🙈</span> Delete for Me</div>' +
-        '</div>' +
-      '</span>';
-  }
-
   // Sender name — bold+orange if this message is unread, clickable to mark read
   var senderHtml = '';
   if (!isMine) {
     var isUnread = msg.id && state.unreadMsgIds.has(msg.id);
     if (isUnread) {
-      senderHtml = '<strong class="sender-unread" id="sender-' + msg.id + '" onclick="markSenderRead(\'' + msg.id + '\',\'' + escapeHtml(msg.sender) + '\')" title="Click to mark as read">' + escapeHtml(msg.sender) + '</strong>';
+      senderHtml = '<strong class="sender-unread" id="sender-' + msg.id + '" title="Click to mark as read">' + escapeHtml(msg.sender) + '</strong>';
     } else {
       senderHtml = '<strong>' + escapeHtml(msg.sender) + '</strong>';
     }
@@ -754,51 +724,188 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
       '</div>' +
       '<div class="reactions">' + reactions + '</div>' +
       seenHtml +
-      '<div class="msg-actions">' +
-        quoteAction +
-        '<span class="ma-btn ma-btn-like" onclick="reactTo(\'' + msg.id + '\',\'👍\')" title="Like">' + svgLike + '</span>' +
-        '<span class="ma-btn ma-btn-heart" onclick="reactTo(\'' + msg.id + '\',\'❤️\')" title="Love">' + svgHeart + '</span>' +
-        '<span class="ma-btn ma-btn-laugh" onclick="reactTo(\'' + msg.id + '\',\'😂\')" title="Haha">' + svgLaugh + '</span>' +
-        editAction +
-        deleteAction +
-      '</div>' +
     '</div>';
 
   area.appendChild(group);
 
-  // Mobile: tap bubble to toggle action buttons
-  if ('ontouchstart' in window || window.innerWidth <= 640) {
-    const bubble  = group.querySelector('.msg-bubble');
-    const content = group.querySelector('.msg-content');
-    if (bubble && content) {
-      bubble.addEventListener('click', function(e) {
-        if (e.target.closest('.msg-actions') || e.target.tagName === 'A') return;
-        const isMobile = window.innerWidth <= 640;
-        if (!isMobile) return;
-        // Close all other open msg-content first
-        document.querySelectorAll('.msg-content.actions-open').forEach(function(c) {
-          if (c !== content) c.classList.remove('actions-open');
-        });
-        content.classList.toggle('actions-open');
+  // Wire sender name click (mark unread as read)
+  if (!isMine && msg.id) {
+    var senderEl = group.querySelector('.sender-unread');
+    if (senderEl) {
+      senderEl.addEventListener('click', function() {
+        markSenderRead(msg.id, msg.sender);
       });
     }
   }
 
-  // Flip action bar above bubble when message is near the bottom of the viewport
+  // Right-click (desktop) → show global floating action bar at cursor
   var msgContent = group.querySelector('.msg-content');
   if (msgContent) {
-    msgContent.addEventListener('mouseenter', function() {
-      var rect = group.getBoundingClientRect();
-      var area = document.getElementById('messagesArea');
-      var areaRect = area ? area.getBoundingClientRect() : { bottom: window.innerHeight };
-      // If less than 80px from the bottom of the messages area, flip up
-      if (areaRect.bottom - rect.bottom < 80) {
-        msgContent.classList.add('flip-up');
-      } else {
-        msgContent.classList.remove('flip-up');
-      }
+    msgContent.addEventListener('contextmenu', function(e) {
+      if (e.target.tagName === 'A') return;
+      e.preventDefault();
+      // On mobile, contextmenu fires from long-press — but we handle that via touchstart.
+      // Only use contextmenu on non-touch devices to avoid double-triggering.
+      if (_isTouchDevice()) return;
+      showMsgActionsBar(e.clientX, e.clientY, msg, isMine);
     });
   }
+
+  // Mobile long-press (500ms hold without move)
+  var msgBubble = group.querySelector('.msg-bubble');
+  if (msgBubble) {
+    var _touchTimer = null;
+    var _touchX = 0, _touchY = 0;
+    var _touchMoved = false;
+    msgBubble.addEventListener('touchstart', function(e) {
+      if (e.target.tagName === 'A') return;
+      _touchX = e.touches[0].clientX;
+      _touchY = e.touches[0].clientY;
+      _touchMoved = false;
+      _touchTimer = setTimeout(function() {
+        _touchTimer = null;
+        if (!_touchMoved) showMsgActionsBar(_touchX, _touchY, msg, isMine);
+      }, 500);
+    }, { passive: true });
+    msgBubble.addEventListener('touchmove', function(e) {
+      // Cancel if finger moved more than 10px
+      var dx = e.touches[0].clientX - _touchX;
+      var dy = e.touches[0].clientY - _touchY;
+      if (Math.sqrt(dx*dx + dy*dy) > 10) { _touchMoved = true; clearTimeout(_touchTimer); _touchTimer = null; }
+    }, { passive: true });
+    msgBubble.addEventListener('touchend',   function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
+    msgBubble.addEventListener('touchcancel',function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
+  }
+}
+
+// ── GLOBAL FLOATING MESSAGE ACTION BAR ───────────────────────────────────────
+// Single shared bar that moves to the cursor on right-click / long-press.
+
+function _isTouchDevice() {
+  return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+}
+
+var _msgActionsBar = null;   // the DOM element
+var _msgActionsBarSvg = {
+  reply:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>',
+  like:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>',
+  heart:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>',
+  laugh:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+  edit:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  del:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>',
+};
+
+function _getMsgActionsBar() {
+  if (!_msgActionsBar) {
+    _msgActionsBar = document.createElement('div');
+    _msgActionsBar.className = 'msg-actions';
+    _msgActionsBar.id = 'globalMsgActionsBar';
+    document.body.appendChild(_msgActionsBar);
+
+    // Close when clicking outside — skip right-clicks (button=2), those are handled by contextmenu
+    document.addEventListener('mousedown', function(e) {
+      if (e.button === 2) return; // right-click — contextmenu will handle it
+      if (_justOpenedMsgActions) { _justOpenedMsgActions = false; return; }
+      if (!e.target.closest('#globalMsgActionsBar') && !e.target.closest('#globalDelMenu')) {
+        hideMsgActionsBar();
+      }
+    });
+    // Mobile: close on tap outside the bar
+    document.addEventListener('touchstart', function(e) {
+      if (!_msgActionsBar || !_msgActionsBar.classList.contains('actions-open')) return;
+      if (!e.target.closest('#globalMsgActionsBar') && !e.target.closest('#globalDelMenu')) {
+        // Small delay so the tap doesn't also re-open via long-press timer
+        setTimeout(hideMsgActionsBar, 10);
+      }
+    }, { passive: true });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') hideMsgActionsBar();
+    });
+  }
+  return _msgActionsBar;
+}
+
+function hideMsgActionsBar() {
+  var bar = _msgActionsBar;
+  if (!bar) return;
+  bar.classList.remove('actions-open');
+  // Also close any open del-menu inside it
+  bar.querySelectorAll('.del-menu.show').forEach(function(m) { m.classList.remove('show'); });
+}
+
+function showMsgActionsBar(clientX, clientY, msg, isMine) {
+  var bar = _getMsgActionsBar();
+
+  // Rebuild buttons for this specific message
+  var svgR = _msgActionsBarSvg;
+  bar.innerHTML =
+    (msg.id ? '<span class="ma-btn ma-act-reply" title="Reply">'                   + svgR.reply + '</span>' : '') +
+    '<span class="ma-btn ma-btn-like  ma-act-like"  title="Like">'                 + svgR.like  + '</span>' +
+    '<span class="ma-btn ma-btn-heart ma-act-heart" title="Love">'                 + svgR.heart + '</span>' +
+    '<span class="ma-btn ma-btn-laugh ma-act-laugh" title="Haha">'                 + svgR.laugh + '</span>' +
+    (isMine && msg.id ? '<span class="ma-btn ma-act-edit" title="Edit">'           + svgR.edit  + '</span>' : '') +
+    (msg.id
+      ? '<span class="ma-btn ma-btn-danger del-wrap ma-act-delete" title="Delete">' +
+          svgR.del +
+          '<div class="del-menu" id="globalDelMenu">' +
+            (isMine ? '<div class="del-everyone"><span style="font-size:11px">🗑️</span> Delete for Everyone</div>' : '') +
+            '<div class="del-for-me"><span style="font-size:11px">🙈</span> Delete for Me</div>' +
+          '</div>' +
+        '</span>'
+      : '');
+
+  // Wire buttons
+  var replyBtn    = bar.querySelector('.ma-act-reply');
+  var likeBtn     = bar.querySelector('.ma-act-like');
+  var heartBtn    = bar.querySelector('.ma-act-heart');
+  var laughBtn    = bar.querySelector('.ma-act-laugh');
+  var editBtn     = bar.querySelector('.ma-act-edit');
+  var deleteBtn   = bar.querySelector('.ma-act-delete');
+  var delMenu     = bar.querySelector('.del-menu');
+  var delEveryone = delMenu && delMenu.querySelector('.del-everyone');
+  var delForMe    = delMenu && delMenu.querySelector('.del-for-me');
+
+  if (replyBtn)  replyBtn.addEventListener('click',  function(e) { e.stopPropagation(); hideMsgActionsBar(); quoteMessage(msg.id); });
+  if (likeBtn)   likeBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '👍'); });
+  if (heartBtn)  heartBtn.addEventListener('click',  function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '❤️'); });
+  if (laughBtn)  laughBtn.addEventListener('click',  function(e) { e.stopPropagation(); hideMsgActionsBar(); reactTo(msg.id, '😂'); });
+  if (editBtn)   editBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); startEdit(msg.id); });
+  if (deleteBtn) deleteBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (!delMenu) return;
+    var isOpen = delMenu.classList.contains('show');
+    document.querySelectorAll('.del-menu.show').forEach(function(m) { m.classList.remove('show'); });
+    if (!isOpen) delMenu.classList.add('show');
+  });
+  if (delEveryone) delEveryone.addEventListener('click', function(e) {
+    e.stopPropagation();
+    hideMsgActionsBar(); deleteMsg(msg.id);
+  });
+  if (delForMe) delForMe.addEventListener('click', function(e) {
+    e.stopPropagation();
+    hideMsgActionsBar(); deleteForMe(msg.id);
+  });
+
+  // Show bar so we can measure its dimensions
+  bar.classList.add('actions-open');
+
+  // Position near cursor/touch point, keeping within the visual viewport
+  var vw = (window.visualViewport ? window.visualViewport.width  : window.innerWidth);
+  var vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+  var vx = (window.visualViewport ? window.visualViewport.offsetLeft : 0);
+  var vy = (window.visualViewport ? window.visualViewport.offsetTop  : 0);
+
+  var barW   = bar.offsetWidth  || 240;
+  var barH   = bar.offsetHeight || 44;
+  var margin = 10;
+  var x = clientX + margin;
+  var y = clientY + margin;
+  // Flip left if overflowing right edge
+  if (x + barW > vx + vw - margin) x = clientX - barW - margin;
+  // Flip up if overflowing bottom edge
+  if (y + barH > vy + vh - margin) y = clientY - barH - margin;
+  bar.style.left = Math.max(vx + margin, x) + 'px';
+  bar.style.top  = Math.max(vy + margin, y) + 'px';
 }
 
 function makeDateDivider(label) {
@@ -979,6 +1086,9 @@ function closeDeleteMenu() {
 document.addEventListener('mousedown', function(e) {
   if (!e.target.closest('.del-wrap')) closeDeleteMenu();
 });
+
+// Flag used by the global action bar mousedown handler (set in showMsgActionsBar contextmenu)
+var _justOpenedMsgActions = false;
 
 // DELETE MESSAGE — with 5-second undo window
 var _deleteTimers = {}; // pending delete timers keyed by msgId
@@ -2685,18 +2795,21 @@ function quoteMessage(msgId) {
   const meta   = group.querySelector('.msg-meta strong');
   const sender = meta ? meta.textContent : 'Unknown';
   
-  // Get text but exclude emoji reactions and action buttons
+  // Get text but exclude the nested quote block and any action buttons
   let text = '';
   if (bubble) {
     // Clone the bubble to manipulate it
     const clone = bubble.cloneNode(true);
-    // Remove action buttons and reactions
+    // Remove the quoted block (nested reply preview) — we only want the direct message text
+    const nestedQuote = clone.querySelector('.msg-quote');
+    if (nestedQuote) nestedQuote.remove();
+    // Remove action buttons if any remain
     const actions = clone.querySelector('.msg-actions');
     if (actions) actions.remove();
     // Get text and clean up
     text = clone.innerText
       .replace(/👍|❤️|😂|🗑️|↩️|✏️/g, '') // Remove any remaining emoji icons
-      .replace(/[\n\r]+/g, ' ')           // Replace newlines with spaces
+      .replace(/[\n\r]+/g, ' ')            // Replace newlines with spaces
       .trim()
       .slice(0, 200);
   }
