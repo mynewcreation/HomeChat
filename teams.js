@@ -936,6 +936,275 @@ function closeMsgEmojiPicker() {
   if (_msgEmojiPicker) { _msgEmojiPicker.remove(); _msgEmojiPicker = null; }
 }
 
+// ── TRANSLATE MESSAGE ─────────────────────────────────────────────────────────
+// ── TRANSLATE MESSAGE ─────────────────────────────────────────────────────────
+// Supports all world languages including all Philippine regional languages:
+// Tagalog, Cebuano, Ilocano, Hiligaynon, Waray, Kapampangan, Pangasinan,
+// Bikol, Maranao, Tausug, Chavacano, and more.
+
+// Philippine language codes known to Google Translate
+var _phLangs = ['tl','ceb','ilo','hil','war','pam','pag','bcl','mdh','tsg'];
+
+// PH language retry order — tried one by one when auto-detect fails
+var _phRetryOrder = ['tl','ceb','bcl','ilo','hil','war','pam','pag'];
+
+// Common words from ALL major Philippine languages for heuristic detection
+var _phHints = [
+  // ── High-confidence Tagalog code-switching markers ──
+  // These appear even in heavily English-mixed messages
+  'yung','yun','yon','yan','yung','nga','naman','kasi','daw','raw','pala',
+  'yata','lang','din','rin','na','pa','ba','eh','kaya','talaga','sobra',
+  'grabe','nako','OMG','hay','oo','hindi','hinde','wala','meron','may',
+  'sige','ok','okay','tara','halika','dito','doon','ngayon','kanina',
+  'bukas','kahapon','ngane','ngani','gane','gani','tsaka','tapos',
+  'pero','kung','kapag','habang','dahil','para','pwede','pwed','pede',
+  'dapat','gusto','ayaw','alam','hindi','huwag','bawal','libre',
+  'lodi','beh','bro','pre','mare','mare','idol','bes','bestie',
+  // ── Tagalog/Filipino ──
+  'po','opo','siya','niya','sino','bakit','paano','kanino','kahit',
+  'siguro','natin','namin','ninyo','basta','iyan','iyon','ako','ikaw',
+  'tayo','kami','kayo','sila','ang','ng','sa','at','mahal','salamat',
+  'ano','sino','saan','kailan','paano','magkano','ilan','alin',
+  // ── Bikol (Central Bikol / Naga) ──
+  'padaba','taka','ini','iyan','idto','dini','duman','digdi','diyan',
+  'dai','bako','hoo','tabi','marhay','maogma','makulog','namit','garo',
+  'ta','asin','pero','kaya','kun','harong','tawo','gadan','buhay',
+  'ngapit','ngonian','kasubanggi','boot','saimo','sakuya','ninda','nita',
+  // ── Cebuano / Bisaya ──
+  'nako','nimo','nato','kini','kana','adto','dili','mao','bitaw',
+  'gyud','man','lagi','pud','sad','kaayo','unsay','asa','ngano',
+  'kinsa','unsa','gikan','hangtod','ug','og','ni','kang',
+  // ── Ilocano ──
+  'ania','naay','daytoy','dayta','sika','isuna','ditoy','idiay',
+  'ket','ngem','wenno','ti','dagiti','kenkuana','kastoy','kasano',
+  // ── Hiligaynon / Ilonggo ──
+  'indi','bala','guid','gid','kag','sang','kon','ukon',
+  'naton','namon','nila','aga','hapon',
+  // ── Waray ──
+  'hini','hira','dire','didto','ngan','waray','amo','hiya',
+  'aton','amon','inyo','ira',
+  // ── Kapampangan ──
+  'eku','itamu','ikami','niti','neta','king','kareng','keng','ban','nung',
+  // ── Pangasinan ──
+  'siak','sikato','sikatayo','sikami','sikayo','sikara','nayan','natan',
+  'diad','diman','tan','balet',
+];
+
+function _isProbablyPhilippine(text) {
+  var lower = text.toLowerCase().replace(/[^a-z\s]/g, ' ');
+  var words = lower.split(/\s+/).filter(function(w) { return w.length > 1; });
+  if (!words.length) return false;
+  // Even ONE known PH word is enough — code-switched messages always have at least one
+  for (var i = 0; i < words.length; i++) {
+    if (_phHints.indexOf(words[i]) !== -1) return true;
+  }
+  return false;
+}
+
+function _googleTranslate(sl, q, onSuccess, onFail) {
+  // dt=t  → translation
+  // dt=bd → bilingual dictionary (word meanings per part-of-speech)
+  // dt=rm → romanization / transliteration
+  var enc = encodeURIComponent(q);
+  var url = 'https://translate.googleapis.com/translate_a/single' +
+            '?client=gtx&sl=' + sl + '&tl=en&dt=t&dt=bd&dt=rm&q=' + enc;
+  fetch(url)
+    .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function(data) {
+      if (!data || !data[0]) throw new Error('empty');
+      // data[0]  → translation chunks [ [translated, original], ... ]
+      // data[1]  → bilingual dict     [ [pos, [meanings]], ... ]  (may be null)
+      // data[2]  → detected lang
+      var out = data[0].reduce(function(acc, chunk) { return acc + (chunk[0] || ''); }, '').trim();
+      if (!out) throw new Error('empty');
+      var detected = (sl === 'auto' && data[2]) ? data[2] : sl;
+      var dict     = (data[1] && Array.isArray(data[1])) ? data[1] : null;
+      onSuccess(out, detected, dict);
+    })
+    .catch(onFail);
+}
+
+// Try each Philippine language code in sequence until we get a real translation
+function _tryPhRetry(q, idx, onSuccess, onFail) {
+  if (idx >= _phRetryOrder.length) { onFail(); return; }
+  var lang = _phRetryOrder[idx];
+  _googleTranslate(lang, q, function(out, detected, dict) {
+    // Accept if translation is meaningfully different from the input
+    if (out.trim().toLowerCase() !== q.trim().toLowerCase()) {
+      onSuccess(out, lang, dict);
+    } else {
+      // This language gave same result — try next
+      _tryPhRetry(q, idx + 1, onSuccess, onFail);
+    }
+  }, function() {
+    _tryPhRetry(q, idx + 1, onSuccess, onFail);
+  });
+}
+
+function translateMessage(msg) {
+  if (!msg || !msg.text) return;
+
+  var msgId = msg.id;
+  var text  = msg.text.trim();
+  if (!text) return;
+
+  // Toggle — clicking 🌐 again dismisses the translation
+  var existing = document.getElementById('tr-' + msgId);
+  if (existing) { existing.remove(); return; }
+
+  // Find the bubble to insert translation below it
+  var group  = msgId ? document.querySelector('[data-msg-id="' + msgId + '"]') : null;
+  var bubble = group ? group.querySelector('.msg-bubble') : null;
+  if (!bubble) return;
+
+  // Insert loading placeholder
+  var trEl = document.createElement('div');
+  trEl.id        = 'tr-' + msgId;
+  trEl.className = 'msg-translation';
+  trEl.innerHTML =
+    '<span class="tr-label">🌐 EN</span>' +
+    '<span class="tr-text tr-loading">Translating…</span>' +
+    '<span class="tr-close" title="Dismiss">✕</span>';
+  bubble.parentNode.insertBefore(trEl, bubble.nextSibling);
+
+  trEl.querySelector('.tr-close').addEventListener('click', function(e) {
+    e.stopPropagation(); trEl.remove();
+  });
+
+  // Language display names for Philippine languages
+  var _langNames = {
+    tl:'Filipino', ceb:'Cebuano', ilo:'Ilocano', hil:'Hiligaynon',
+    war:'Waray', pam:'Kapampangan', pag:'Pangasinan', bcl:'Bikol',
+    mdh:'Maguindanao', tsg:'Tausug',
+    zh:'Chinese', ja:'Japanese', ko:'Korean', ar:'Arabic',
+    es:'Spanish', fr:'French', de:'German', pt:'Portuguese',
+    ru:'Russian', hi:'Hindi', id:'Indonesian', ms:'Malay',
+    th:'Thai', vi:'Vietnamese',
+  };
+
+  function langLabel(code) {
+    return _langNames[code] || code.toUpperCase();
+  }
+
+  function showResult(translated, detectedLang, dict) {
+    var textEl = trEl.querySelector('.tr-text');
+    if (!textEl) return;
+    textEl.classList.remove('tr-loading');
+    var clean = (translated || '').trim();
+
+    if (!clean || clean.toLowerCase() === text.toLowerCase()) {
+      textEl.textContent = '(already in English)';
+      return;
+    }
+
+    // Update label with detected language name
+    if (detectedLang && detectedLang !== 'en') {
+      var label = trEl.querySelector('.tr-label');
+      if (label) label.textContent = '🌐 ' + langLabel(detectedLang) + ' → EN';
+    }
+
+    // Build output: main translation first
+    var html = '<span class="tr-main">' + escapeHtml(clean) + '</span>';
+
+    // If the API returned a bilingual dictionary (word is short / single-word),
+    // render each part-of-speech group with its list of meanings
+    // dict format: [ ["noun", ["meaning1","meaning2",...], null, ["synonym",...]], ... ]
+    if (dict && dict.length > 0) {
+      html += '<ul class="tr-meanings">';
+      dict.forEach(function(entry) {
+        var pos      = entry[0] || '';          // e.g. "noun", "verb", "adjective"
+        var meanings = entry[1] || [];          // array of English meaning strings
+        if (!meanings.length) return;
+        // Show up to 4 meanings per POS to keep it concise
+        var limited = meanings.slice(0, 4);
+        html += '<li class="tr-pos"><em>' + escapeHtml(pos) + ':</em> ' +
+                limited.map(function(m) { return '<span class="tr-meaning">' + escapeHtml(m) + '</span>'; }).join(', ') +
+                '</li>';
+      });
+      html += '</ul>';
+    }
+
+    textEl.innerHTML = html;
+  }
+
+  function showError() {
+    var textEl = trEl.querySelector('.tr-text');
+    if (textEl) { textEl.classList.remove('tr-loading'); textEl.textContent = 'Translation unavailable. Check connection.'; }
+  }
+
+  var q = text.slice(0, 1000);
+
+  // Detect clearly non-Latin scripts (CJK, Arabic, Cyrillic, Devanagari, etc.)
+  // These are definitely NOT Filipino so we skip the PH-first path
+  function _isNonLatinScript(t) {
+    return /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0E00-\u0E7F]/.test(t);
+  }
+
+  // ── MAIN TRANSLATION LOGIC ──────────────────────────────────────────────────
+  // Priority: Filipino/PH languages FIRST, then fall back to global auto-detect.
+  // Exception: non-Latin scripts are sent directly to auto-detect (they're clearly
+  // not Filipino).
+
+  if (_isNonLatinScript(q)) {
+    // Non-Latin script (Chinese, Arabic, Russian, etc.) — go straight to auto-detect
+    _googleTranslate('auto', q, function(out, detected, dict) {
+      showResult(out, detected, dict);
+    }, function() {
+      fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q.slice(0,500)) + '&langpair=autodetect|en-US')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var t = data && data.responseData && data.responseData.translatedText;
+          showResult(t || q, '', null);
+        })
+        .catch(showError);
+    });
+    return;
+  }
+
+  // For ALL Latin-script text: try Tagalog first (handles Filipino + Taglish perfectly)
+  // If Tagalog gives a meaningful translation → done.
+  // If not → try the full PH retry chain.
+  // If still nothing → fall back to Google auto-detect (catches Spanish, Indonesian, etc.)
+  _googleTranslate('tl', q, function(out, detected, dict) {
+    var sameAsInput = out.trim().toLowerCase() === q.trim().toLowerCase();
+
+    if (!sameAsInput) {
+      // Tagalog gave a real translation — use it
+      showResult(out, 'tl', dict);
+    } else {
+      // Tagalog returned same text — try other PH languages
+      _tryPhRetry(q, 1, showResult, function() {
+        // No PH language worked — fall back to Google auto-detect
+        // (covers genuine English, Spanish, Indonesian, Malay, etc.)
+        _googleTranslate('auto', q, function(out2, detected2, dict2) {
+          showResult(out2, detected2, dict2);
+        }, function() {
+          // Engine 2: MyMemory
+          fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q.slice(0,500)) + '&langpair=autodetect|en-US')
+            .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+            .then(function(data) {
+              var t = data && data.responseData && data.responseData.translatedText;
+              if (!t || t === 'NO QUERY SPECIFIED') throw new Error('empty');
+              showResult(t, '', null);
+            })
+            .catch(function() {
+              // Engine 3: Lingva
+              fetch('https://lingva.ml/api/v1/auto/en/' + encodeURIComponent(q))
+                .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+                .then(function(data) { showResult(data && data.translation || '', (data && data.info && data.info.detectedSource) || '', null); })
+                .catch(showError);
+            });
+        });
+      });
+    }
+  }, function() {
+    // Tagalog fetch failed — go straight to auto-detect
+    _googleTranslate('auto', q, function(out, detected, dict) {
+      showResult(out, detected, dict);
+    }, showError);
+  });
+}
+
 function showMsgActionsBar(clientX, clientY, msg, isMine) {
   var bar = _getMsgActionsBar();
 
@@ -947,6 +1216,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
     '<span class="ma-btn ma-btn-heart ma-act-heart" title="Love">'                 + svgR.heart + '</span>' +
     '<span class="ma-btn ma-btn-laugh ma-act-laugh" title="Haha">'                 + svgR.laugh + '</span>' +
     (msg.id ? '<span class="ma-btn ma-act-more-emoji" title="More reactions" style="font-size:15px;font-weight:700;">＋</span>' : '') +
+    (msg.text ? '<span class="ma-btn ma-act-translate" title="Translate to English" style="font-size:14px;">🌐</span>' : '') +
     (isMine && msg.id ? '<span class="ma-btn ma-act-edit" title="Edit">'           + svgR.edit  + '</span>' : '') +
     (msg.id
       ? '<span class="ma-btn ma-btn-danger del-wrap ma-act-delete" title="Delete">' +
@@ -964,6 +1234,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
   var heartBtn    = bar.querySelector('.ma-act-heart');
   var laughBtn    = bar.querySelector('.ma-act-laugh');
   var moreEmojiBtn= bar.querySelector('.ma-act-more-emoji');
+  var translateBtn= bar.querySelector('.ma-act-translate');
   var editBtn     = bar.querySelector('.ma-act-edit');
   var deleteBtn   = bar.querySelector('.ma-act-delete');
   var delMenu     = bar.querySelector('.del-menu');
@@ -977,6 +1248,11 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
   if (moreEmojiBtn) moreEmojiBtn.addEventListener('click', function(e) {
     e.stopPropagation();
     toggleMsgEmojiPicker(moreEmojiBtn, msg.id);
+  });
+  if (translateBtn) translateBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    hideMsgActionsBar();
+    translateMessage(msg);
   });
   if (editBtn)   editBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); startEdit(msg.id); });
   if (deleteBtn) deleteBtn.addEventListener('click', function(e) {
