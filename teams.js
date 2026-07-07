@@ -29,6 +29,7 @@ const channels = [];
 
 // INIT
 document.addEventListener('DOMContentLoaded', async () => {
+  _initMsgActionsDelegation(); // set up delegated right-click / long-press listeners once
   state.currentUser = JSON.parse(sessionStorage.getItem('teamsUser'));
 
   document.getElementById('myName').textContent        = state.currentUser.name;
@@ -82,6 +83,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
   window.addEventListener('beforeunload', markOffline);
+
+  // Mark current channel as seen when user returns to the window
+  function _onWindowActive() {
+    if (!document.hidden && document.hasFocus()) {
+      // Re-trigger seen marking and unread clearing for the current channel
+      var area = document.getElementById('messagesArea');
+      if (area) clearUnreadMsgIdsForChannel();
+      if (state.currentChannel && state.unsubscribeMessages) {
+        // Re-fetch the latest messages to mark seen
+        db.collection('channels').doc(state.currentChannel)
+          .collection('messages').orderBy('timestamp').limitToLast(50).get()
+          .then(function(snap) {
+            var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
+            markChannelSeen(state.currentChannel, msgs);
+            // Also clear unread count for this channel
+            state.unread[state.currentChannel] = 0;
+            state.unreadSenders[state.currentChannel] = new Set();
+            renderChannels();
+            renderDMsFromCache();
+            updateTabTitle();
+          }).catch(function() {});
+      }
+    }
+  }
+
+  window.addEventListener('focus', _onWindowActive);
+  document.addEventListener('visibilitychange', _onWindowActive);
 });
 
 
@@ -534,10 +562,11 @@ function loadChannel(id, title, desc) {
       var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       var newCount = msgs.length;
       var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : -1;
+      var isFirstLoad = oldCount < 0;
 
       if (oldCount >= 0 && newCount > oldCount) {
-        var added     = newCount - oldCount;
-        var newMsgs   = msgs.slice(msgs.length - added);
+        var added      = newCount - oldCount;
+        var newMsgs    = msgs.slice(msgs.length - added);
         var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; });
 
         if (fromOthers.length > 0) {
@@ -549,24 +578,61 @@ function loadChannel(id, title, desc) {
             renderDMsFromCache();
             updateTabTitle();
           }
-          fromOthers.forEach(function(m) {
-            if (m.id) state.unreadMsgIds.add(m.id);
-          });
-          if (fromOthers.length > 0) {
-            state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
-          }
+          fromOthers.forEach(function(m) { if (m.id) state.unreadMsgIds.add(m.id); });
+          state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
           updateFavicon(true);
-          // Notifications are handled exclusively by startNotifListeners
-          // to avoid duplicates — do NOT call showBrowserNotification here.
         }
       }
 
       state.msgCount[id] = newCount;
       if (id.startsWith('dm-') && newCount > 0) {
         state.dmLastActivity[id] = Date.now();
-        renderDMsFromCache();
+        // Only re-sort DM list, don't call heavy renderDMsFromCache on every message
+        if (!isFirstLoad) renderDMsFromCache();
       }
-      renderMessages(msgs);
+
+      // ── Incremental render: append only new messages instead of full rebuild ──
+      var area = document.getElementById('messagesArea');
+      var hasExistingContent = area && area.querySelector('.msg-group');
+
+      if (!isFirstLoad && hasExistingContent && newCount > oldCount) {
+        // Only new messages added — append them without wiping the DOM
+        var added  = newCount - oldCount;
+        var newMsgs = msgs.slice(msgs.length - added);
+        var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+
+        // Pre-compute lastSeenMsgPerUser for seen indicators
+        var lastSeenMsgPerUser = {};
+        msgs.forEach(function(msg) {
+          if (!msg.seenBy) return;
+          Object.keys(msg.seenBy).forEach(function(user) {
+            if (user !== state.currentUser.name) lastSeenMsgPerUser[user] = msg.id;
+          });
+        });
+
+        newMsgs.forEach(function(msg) {
+          if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
+          // Insert date divider if the date has changed
+          var label = msgDateLabel(msg);
+          var dividers = area.querySelectorAll('.date-divider');
+          var lastDiv  = dividers.length ? dividers[dividers.length - 1] : null;
+          if (!lastDiv || lastDiv.textContent !== label) {
+            area.appendChild(makeDateDivider(label));
+          }
+          appendMessageEl(area, msg, lastSeenMsgPerUser);
+        });
+
+        if (wasAtBottom) area.scrollTop = area.scrollHeight;
+        markChannelSeen(state.currentChannel, msgs);
+
+        // Schedule clearing unread highlights
+        setTimeout(function() {
+          if (document.hasFocus() && !document.hidden) clearUnreadMsgIdsForChannel();
+        }, 3000);
+      } else {
+        // Full render: initial load, deletion, reaction update, seen update, etc.
+        renderMessages(msgs);
+      }
     });
 }
 
@@ -622,9 +688,9 @@ function renderMessages(msgs) {
   // Mark channel as seen by current user
   markChannelSeen(state.currentChannel, msgs);
 
-  // After rendering, schedule clearing unread IDs
+  // After rendering, schedule clearing unread IDs — only if window is active
   setTimeout(function() {
-    if (document.hasFocus()) {
+    if (document.hasFocus() && !document.hidden) {
       clearUnreadMsgIdsForChannel();
     }
   }, 3000);
@@ -737,49 +803,130 @@ function appendMessageEl(area, msg, lastSeenMsgPerUser) {
       });
     }
   }
-
-  // Right-click (desktop) → show global floating action bar at cursor
-  var msgContent = group.querySelector('.msg-content');
-  if (msgContent) {
-    msgContent.addEventListener('contextmenu', function(e) {
-      if (e.target.tagName === 'A') return;
-      e.preventDefault();
-      // On mobile, contextmenu fires from long-press — but we handle that via touchstart.
-      // Only use contextmenu on non-touch devices to avoid double-triggering.
-      if (_isTouchDevice()) return;
-      showMsgActionsBar(e.clientX, e.clientY, msg, isMine);
-    });
-  }
-
-  // Mobile long-press (500ms hold without move)
-  var msgBubble = group.querySelector('.msg-bubble');
-  if (msgBubble) {
-    var _touchTimer = null;
-    var _touchX = 0, _touchY = 0;
-    var _touchMoved = false;
-    msgBubble.addEventListener('touchstart', function(e) {
-      if (e.target.tagName === 'A') return;
-      _touchX = e.touches[0].clientX;
-      _touchY = e.touches[0].clientY;
-      _touchMoved = false;
-      _touchTimer = setTimeout(function() {
-        _touchTimer = null;
-        if (!_touchMoved) showMsgActionsBar(_touchX, _touchY, msg, isMine);
-      }, 500);
-    }, { passive: true });
-    msgBubble.addEventListener('touchmove', function(e) {
-      // Cancel if finger moved more than 10px
-      var dx = e.touches[0].clientX - _touchX;
-      var dy = e.touches[0].clientY - _touchY;
-      if (Math.sqrt(dx*dx + dy*dy) > 10) { _touchMoved = true; clearTimeout(_touchTimer); _touchTimer = null; }
-    }, { passive: true });
-    msgBubble.addEventListener('touchend',   function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
-    msgBubble.addEventListener('touchcancel',function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
-  }
+  // contextmenu (desktop) and touch long-press (mobile) are handled by
+  // delegated listeners on document/messagesArea — see _initMsgActionsDelegation()
 }
 
 // ── GLOBAL FLOATING MESSAGE ACTION BAR ───────────────────────────────────────
 // Single shared bar that moves to the cursor on right-click / long-press.
+
+// ── Delegated event listeners for message actions ────────────────────────────
+// Attached once to document/messagesArea — survive DOM rebuilds from renderMessages.
+var _msgActionsDelegated = false;
+var _barJustOpened = false; // prevents the same gesture that opens the bar from closing it
+
+function _initMsgActionsDelegation() {
+  if (_msgActionsDelegated) return;
+  _msgActionsDelegated = true;
+
+  // ── Desktop: right-click on any .msg-content ──────────────────────────────
+  document.addEventListener('contextmenu', function(e) {
+    if (e.target.tagName === 'A') return;
+    if (e.target.closest('#globalMsgActionsBar') || e.target.closest('#msgEmojiPicker')) return;
+
+    var msgContent = e.target.closest('.msg-content');
+    if (!msgContent) return;
+
+    if (_isTouchDevice()) { e.preventDefault(); return; }
+
+    e.preventDefault();
+
+    var group = msgContent.closest('.msg-group');
+    if (!group) return;
+
+    _showBarForGroup(group, e.clientX, e.clientY);
+  });
+
+  // ── Desktop: close bar on outside left-click ─────────────────────────────
+  document.addEventListener('mousedown', function(e) {
+    if (e.button === 2) return; // right-click handled by contextmenu
+    if (_barJustOpened) { _barJustOpened = false; return; }
+    if (e.target.closest('#globalMsgActionsBar') ||
+        e.target.closest('#globalDelMenu') ||
+        e.target.closest('#msgEmojiPicker')) return;
+    hideMsgActionsBar();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideMsgActionsBar();
+  });
+
+  // ── Mobile: long-press on any .msg-bubble ─────────────────────────────────
+  var _touchTimer = null;
+  var _touchStartX = 0, _touchStartY = 0, _touchMoved = false;
+
+  document.addEventListener('touchstart', function(e) {
+    // Close bar on outside tap — but not on the same touch that opens it
+    if (_msgActionsBar && _msgActionsBar.classList.contains('actions-open')) {
+      if (!e.target.closest('#globalMsgActionsBar') &&
+          !e.target.closest('#globalDelMenu') &&
+          !e.target.closest('#msgEmojiPicker')) {
+        // Only close if this touch is NOT on a bubble (which would re-open)
+        if (!e.target.closest('.msg-bubble')) {
+          setTimeout(hideMsgActionsBar, 10);
+          return;
+        }
+      }
+    }
+
+    var bubble = e.target.closest('.msg-bubble');
+    if (!bubble) return;
+    if (e.target.tagName === 'A') return;
+    if (e.target.closest('#globalMsgActionsBar') || e.target.closest('#msgEmojiPicker')) return;
+
+    _touchStartX = e.touches[0].clientX;
+    _touchStartY = e.touches[0].clientY;
+    _touchMoved  = false;
+
+    clearTimeout(_touchTimer);
+    _touchTimer = setTimeout(function() {
+      _touchTimer = null;
+      if (_touchMoved) return;
+      var group = bubble.closest('.msg-group');
+      if (!group || !group.isConnected) return; // DOM was rebuilt
+      _barJustOpened = true;
+      _showBarForGroup(group, _touchStartX, _touchStartY);
+      setTimeout(function() { _barJustOpened = false; }, 50);
+    }, 700);
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (!_touchTimer) return;
+    var dx = e.touches[0].clientX - _touchStartX;
+    var dy = e.touches[0].clientY - _touchStartY;
+    if (Math.sqrt(dx * dx + dy * dy) > 10) {
+      _touchMoved = true;
+      clearTimeout(_touchTimer);
+      _touchTimer = null;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend',    function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
+  document.addEventListener('touchcancel', function() { clearTimeout(_touchTimer); _touchTimer = null; }, { passive: true });
+}
+
+// Resolve msg from the live DOM group and open the action bar
+function _showBarForGroup(group, clientX, clientY) {
+  var msgId  = group.dataset.msgId;
+  var isMine = group.classList.contains('mine');
+  if (!msgId) return;
+
+  var bubble   = group.querySelector('.msg-bubble');
+  var metaName = group.querySelector('.msg-meta strong');
+
+  var msgText = '';
+  if (bubble) {
+    var clone = bubble.cloneNode(true);
+    var q = clone.querySelector('.msg-quote'); if (q) q.remove();
+    msgText = (clone.innerText || clone.textContent || '').trim();
+  }
+
+  showMsgActionsBar(clientX, clientY, {
+    id:     msgId,
+    text:   msgText,
+    sender: metaName ? metaName.textContent.trim() : '',
+  }, isMine);
+}
 
 function _isTouchDevice() {
   return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -791,6 +938,7 @@ var _msgActionsBarSvg = {
   like:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>',
   heart:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>',
   laugh:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+  copy:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
   edit:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
   del:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>',
 };
@@ -801,28 +949,6 @@ function _getMsgActionsBar() {
     _msgActionsBar.className = 'msg-actions';
     _msgActionsBar.id = 'globalMsgActionsBar';
     document.body.appendChild(_msgActionsBar);
-
-    // Close when clicking outside — skip right-clicks (button=2), those are handled by contextmenu
-    document.addEventListener('mousedown', function(e) {
-      if (e.button === 2) return; // right-click — contextmenu will handle it
-      if (_justOpenedMsgActions) { _justOpenedMsgActions = false; return; }
-      // Don't close if clicking inside the action bar or the emoji picker
-      if (e.target.closest('#globalMsgActionsBar') ||
-          e.target.closest('#globalDelMenu') ||
-          e.target.closest('#msgEmojiPicker')) return;
-      hideMsgActionsBar();
-    });
-    // Mobile: close on tap outside the bar
-    document.addEventListener('touchstart', function(e) {
-      if (!_msgActionsBar || !_msgActionsBar.classList.contains('actions-open')) return;
-      if (e.target.closest('#globalMsgActionsBar') ||
-          e.target.closest('#globalDelMenu') ||
-          e.target.closest('#msgEmojiPicker')) return;
-      setTimeout(hideMsgActionsBar, 10);
-    }, { passive: true });
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') hideMsgActionsBar();
-    });
   }
   return _msgActionsBar;
 }
@@ -1217,6 +1343,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
     '<span class="ma-btn ma-btn-laugh ma-act-laugh" title="Haha">'                 + svgR.laugh + '</span>' +
     (msg.id ? '<span class="ma-btn ma-act-more-emoji" title="More reactions" style="font-size:15px;font-weight:700;">＋</span>' : '') +
     (msg.text ? '<span class="ma-btn ma-act-translate" title="Translate to English" style="font-size:14px;">🌐</span>' : '') +
+    (msg.text ? '<span class="ma-btn ma-act-copy" title="Copy selected text (or full message)">' + svgR.copy + '</span>' : '') +
     (isMine && msg.id ? '<span class="ma-btn ma-act-edit" title="Edit">'           + svgR.edit  + '</span>' : '') +
     (msg.id
       ? '<span class="ma-btn ma-btn-danger del-wrap ma-act-delete" title="Delete">' +
@@ -1235,6 +1362,7 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
   var laughBtn    = bar.querySelector('.ma-act-laugh');
   var moreEmojiBtn= bar.querySelector('.ma-act-more-emoji');
   var translateBtn= bar.querySelector('.ma-act-translate');
+  var copyBtn     = bar.querySelector('.ma-act-copy');
   var editBtn     = bar.querySelector('.ma-act-edit');
   var deleteBtn   = bar.querySelector('.ma-act-delete');
   var delMenu     = bar.querySelector('.del-menu');
@@ -1253,6 +1381,25 @@ function showMsgActionsBar(clientX, clientY, msg, isMine) {
     e.stopPropagation();
     hideMsgActionsBar();
     translateMessage(msg);
+  });
+  if (copyBtn) copyBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    hideMsgActionsBar();
+
+    // Use the active text selection if it exists and is non-empty,
+    // otherwise fall back to the full message text
+    var sel = window.getSelection && window.getSelection();
+    var textToCopy = (sel && sel.toString().trim())
+      ? sel.toString()
+      : (msg.text || '');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(function() {
+        _showCopyToast();
+      }).catch(function() { _copyFallback(textToCopy); });
+    } else {
+      _copyFallback(textToCopy);
+    }
   });
   if (editBtn)   editBtn.addEventListener('click',   function(e) { e.stopPropagation(); hideMsgActionsBar(); startEdit(msg.id); });
   if (deleteBtn) deleteBtn.addEventListener('click', function(e) {
@@ -1472,9 +1619,6 @@ document.addEventListener('mousedown', function(e) {
   if (!e.target.closest('.del-wrap')) closeDeleteMenu();
 });
 
-// Flag used by the global action bar mousedown handler (set in showMsgActionsBar contextmenu)
-var _justOpenedMsgActions = false;
-
 // DELETE MESSAGE — with 5-second undo window
 var _deleteTimers = {}; // pending delete timers keyed by msgId
 
@@ -1597,14 +1741,33 @@ function renderFilePreview() {
 
 async function attachFile(input) {
   if (!input.files.length) return;
-  // Add new files to the pending list (don't replace — accumulate)
-  Array.from(input.files).forEach(function(f) { _pendingFiles.push(f); });
+  var rejected = [];
+  Array.from(input.files).forEach(function(f) {
+    if (f.size > 10 * 1024 * 1024) {
+      rejected.push(f.name);
+    } else {
+      _pendingFiles.push(f);
+    }
+  });
   input.value = ''; // reset so same file can be re-selected
+  if (rejected.length > 0) {
+    alert('File' + (rejected.length > 1 ? 's' : '') + ' too large (max 10 MB):\n' + rejected.join('\n'));
+  }
   renderFilePreview();
 }
 
 function addFilesToPending(files) {
-  Array.from(files).forEach(function(f) { _pendingFiles.push(f); });
+  var rejected = [];
+  Array.from(files).forEach(function(f) {
+    if (f.size > 10 * 1024 * 1024) {
+      rejected.push(f.name);
+    } else {
+      _pendingFiles.push(f);
+    }
+  });
+  if (rejected.length > 0) {
+    alert('File' + (rejected.length > 1 ? 's' : '') + ' too large (max 10 MB):\n' + rejected.join('\n'));
+  }
   renderFilePreview();
 }
 
@@ -2153,23 +2316,133 @@ function closeSettings() { document.getElementById('settingsModal').classList.re
 async function saveSettings() {
   const newName = document.getElementById('settingName').value.trim();
   const status  = document.getElementById('settingStatus').value;
-  if (newName) state.currentUser.name = newName;
+  const oldName = state.currentUser.name;
+  const msgEl   = document.getElementById('settingsSaveMsg');
+
+  if (!newName) return;
+
+  const nameChanged = newName !== oldName;
+
+  // Check for duplicate username using the already-loaded users cache (no network round-trip)
+  if (nameChanged) {
+    var duplicate = _lastKnownUsers.find(function(u) {
+      return u.name.toLowerCase() === newName.toLowerCase() && u.id !== state.currentUser.id;
+    });
+    if (duplicate) {
+      msgEl.style.color = '#e74c3c';
+      msgEl.textContent = 'Username "' + newName + '" is already taken.';
+      return;
+    }
+  }
+
+  // Update local state immediately
+  state.currentUser.name   = newName;
   state.currentUser.status = status;
   updateStatusDisplay(status);
-  document.getElementById('myName').textContent = state.currentUser.name;
+  document.getElementById('myName').textContent          = state.currentUser.name;
   document.getElementById('myAvatarInitial').textContent = state.currentUser.name[0].toUpperCase();
   sessionStorage.setItem('teamsUser', JSON.stringify(state.currentUser));
+
+  // Update users doc
   if (state.currentUser.id) {
     await db.collection('users').doc(state.currentUser.id).update({
-      status: status,
-      name: state.currentUser.name,
+      status:    status,
+      name:      newName,
+      nameLower: newName.toLowerCase(),
     }).catch(function() {});
   }
-  document.getElementById('settingsSaveMsg').textContent = 'Saved ✓';
+
+  // ── Retroactive rename across all messages ──────────────────
+  if (nameChanged) {
+    msgEl.style.color = '#9ea2c8';
+    msgEl.textContent = 'Updating messages…';
+
+    try {
+      // Collect all channel IDs: group channels + DM channels involving this user
+      var allChannelIds = channels.map(function(c) { return c.id; });
+
+      // Add DM channels involving the current user
+      var usersSnap = await db.collection('users').get();
+      usersSnap.docs.forEach(function(d) {
+        var uName = d.data().name;
+        if (uName && uName !== newName) {
+          allChannelIds.push(dmChannelId(oldName, uName));
+        }
+      });
+
+      var totalUpdated = 0;
+
+      for (var i = 0; i < allChannelIds.length; i++) {
+        var chId = allChannelIds[i];
+
+        // --- Update sender field on messages ---
+        var msgsSnap = await db.collection('channels').doc(chId)
+          .collection('messages')
+          .where('sender', '==', oldName)
+          .get()
+          .catch(function() { return { empty: true, docs: [] }; });
+
+        if (!msgsSnap.empty) {
+          // Firestore batch limit is 500 writes
+          var docs = msgsSnap.docs;
+          for (var j = 0; j < docs.length; j += 400) {
+            var batch = db.batch();
+            docs.slice(j, j + 400).forEach(function(d) {
+              batch.update(d.ref, { sender: newName });
+            });
+            await batch.commit();
+            totalUpdated += Math.min(400, docs.length - j);
+          }
+        }
+
+        // --- Update seenBy keys: {oldName: ts} → {newName: ts} ---
+        // seenBy is a map field; we must fetch docs that have seenBy[oldName]
+        // Firestore can't query map keys directly, so we scan all messages in
+        // channels the user participated in (already fetched above covers most;
+        // do a full scan for seenBy keys in all channels)
+        var allMsgsSnap = await db.collection('channels').doc(chId)
+          .collection('messages')
+          .get()
+          .catch(function() { return { empty: true, docs: [] }; });
+
+        if (!allMsgsSnap.empty) {
+          var seenDocs = allMsgsSnap.docs.filter(function(d) {
+            var data = d.data();
+            return data.seenBy && data.seenBy[oldName] !== undefined;
+          });
+
+          for (var k = 0; k < seenDocs.length; k += 400) {
+            var seenBatch = db.batch();
+            seenDocs.slice(k, k + 400).forEach(function(d) {
+              var data   = d.data();
+              var oldTs  = data.seenBy[oldName];
+              var update = {};
+              update['seenBy.' + newName]  = oldTs;
+              update['seenBy.' + oldName]  = firebase.firestore.FieldValue.delete();
+              seenBatch.update(d.ref, update);
+            });
+            await seenBatch.commit();
+          }
+        }
+      }
+
+      msgEl.style.color = '#0e7c63';
+      msgEl.textContent = 'Saved ✓  (' + totalUpdated + ' messages updated)';
+    } catch (err) {
+      console.error('Retroactive rename error:', err);
+      msgEl.style.color = '#e67e22';
+      msgEl.textContent = 'Saved, but some messages could not be updated.';
+    }
+  } else {
+    msgEl.style.color = '#0e7c63';
+    msgEl.textContent = 'Saved ✓';
+  }
+
   setTimeout(function() {
-    document.getElementById('settingsSaveMsg').textContent = '';
+    msgEl.style.color = '';
+    msgEl.textContent = '';
     closeSettings();
-  }, 1000);
+  }, 2000);
 }
 
 function updateStatusDisplay(status) {
@@ -2939,6 +3212,10 @@ function getUserColor(name) {
 
 // Mark this channel as seen by current user
 function markChannelSeen(channelId, msgs) {
+  // Only mark as read when the window is actually active and visible
+  // If the user has the tab open but is working in another window/tab, don't mark as read
+  if (document.hidden || !document.hasFocus()) return;
+
   if (!msgs || msgs.length === 0) return;
   var lastMsg = null;
   for (var i = msgs.length - 1; i >= 0; i--) {

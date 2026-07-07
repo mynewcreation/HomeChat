@@ -412,10 +412,10 @@ body {
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
-  /* Prevent native long-press text selection / callout on mobile */
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
+  /* Allow text selection so users can copy messages */
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .msg-group.mine .msg-bubble {
