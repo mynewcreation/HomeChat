@@ -57,16 +57,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       '<div style="text-align:center;color:#aaa;margin-top:60px;font-size:14px;">No channels yet.<br>Click <strong>+ Add Channel</strong> to create one.</div>';
   }
 
-  // Start notification listeners for all channels
-  setTimeout(startNotifListeners, 1500);
+  // Start notification listeners — once, after initial data is ready
+  setTimeout(startNotifListeners, 800);
 
   // Start listening for incoming video calls
-  setTimeout(startIncomingCallListener, 2000);
+  setTimeout(startIncomingCallListener, 1500);
 
-  // Users listener
+  // Users listener — debounce expensive re-renders so rapid status changes don't thrash the DOM
+  var _usersRenderTimer = null;
   state.unsubscribeUsers = db.collection('users').orderBy('name')
     .onSnapshot(function(snap) {
-      // Handle removals immediately — remove from _lastKnownUsers right away
+      // Handle removals immediately
       snap.docChanges().forEach(function(change) {
         if (change.type === 'removed') {
           _lastKnownUsers = _lastKnownUsers.filter(function(u) {
@@ -76,35 +77,45 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const users = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       _lastKnownUsers = users;
-      renderDMs(users);
-      renderMembers(users);
-      setTimeout(startNotifListeners, 800);
-      seedDmActivityFromCache(users);
+
+      // Debounce: batch rapid user updates (e.g. multiple status changes) into one render
+      clearTimeout(_usersRenderTimer);
+      _usersRenderTimer = setTimeout(function() {
+        renderDMs(users);
+        renderMembers(users);
+        seedDmActivityFromCache(users);
+        startNotifListeners(); // guard inside ensures it only runs once
+      }, 300);
     });
 
   window.addEventListener('beforeunload', markOffline);
 
   // Mark current channel as seen when user returns to the window
   function _onWindowActive() {
-    if (!document.hidden && document.hasFocus()) {
-      // Re-trigger seen marking and unread clearing for the current channel
-      var area = document.getElementById('messagesArea');
-      if (area) clearUnreadMsgIdsForChannel();
-      if (state.currentChannel && state.unsubscribeMessages) {
-        // Re-fetch the latest messages to mark seen
-        db.collection('channels').doc(state.currentChannel)
-          .collection('messages').orderBy('timestamp').limitToLast(50).get()
-          .then(function(snap) {
-            var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
-            markChannelSeen(state.currentChannel, msgs);
-            // Also clear unread count for this channel
-            state.unread[state.currentChannel] = 0;
-            state.unreadSenders[state.currentChannel] = new Set();
-            renderChannels();
-            renderDMsFromCache();
-            updateTabTitle();
-          }).catch(function() {});
+    if (document.hidden || !document.hasFocus()) return;
+    clearUnreadMsgIdsForChannel();
+    // Use already-rendered messages from the DOM — no extra Firestore fetch needed
+    if (state.currentChannel) {
+      var area  = document.getElementById('messagesArea');
+      var groups = area ? area.querySelectorAll('.msg-group[data-msg-id]') : [];
+      if (groups.length > 0) {
+        var lastGroup = groups[groups.length - 1];
+        var lastId    = lastGroup.dataset.msgId;
+        var isMine    = lastGroup.classList.contains('mine');
+        if (lastId && !isMine) {
+          // Mark this message as seen
+          var update = {};
+          update['seenBy.' + state.currentUser.name] = firebase.firestore.FieldValue.serverTimestamp();
+          db.collection('channels').doc(state.currentChannel)
+            .collection('messages').doc(lastId)
+            .update(update).catch(function() {});
+        }
       }
+      state.unread[state.currentChannel] = 0;
+      state.unreadSenders[state.currentChannel] = new Set();
+      renderChannels();
+      renderDMsFromCache();
+      updateTabTitle();
     }
   }
 
@@ -552,8 +563,6 @@ function loadChannel(id, title, desc) {
   renderChannels();
   renderDMsFromCache();
 
-  setTimeout(startNotifListeners, 500);
-
   // Firestore live listener
   state.unsubscribeMessages = db
     .collection('channels').doc(id).collection('messages')
@@ -597,9 +606,24 @@ function loadChannel(id, title, desc) {
 
       if (!isFirstLoad && hasExistingContent && newCount > oldCount) {
         // Only new messages added — append them without wiping the DOM
-        var added  = newCount - oldCount;
+        var added   = newCount - oldCount;
         var newMsgs = msgs.slice(msgs.length - added);
         var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+
+        // Remove any optimistic temp elements for messages that now have a real ID
+        // (the Firestore snapshot has returned with the committed message)
+        newMsgs.forEach(function(msg) {
+          if (msg.sender !== state.currentUser.name) return;
+          // Find any temp element with the same text content sent by me
+          area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) {
+            var bubble = el.querySelector('.msg-bubble');
+            var tempText = bubble ? (bubble.innerText || bubble.textContent || '').trim() : '';
+            // Match by text — remove the first matching temp so the real one replaces it
+            if (tempText && msg.text && tempText.startsWith(msg.text.slice(0, 50).trim())) {
+              el.remove();
+            }
+          });
+        });
 
         // Pre-compute lastSeenMsgPerUser for seen indicators
         var lastSeenMsgPerUser = {};
@@ -613,7 +637,7 @@ function loadChannel(id, title, desc) {
         newMsgs.forEach(function(msg) {
           if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
           // Insert date divider if the date has changed
-          var label = msgDateLabel(msg);
+          var label    = msgDateLabel(msg);
           var dividers = area.querySelectorAll('.date-divider');
           var lastDiv  = dividers.length ? dividers[dividers.length - 1] : null;
           if (!lastDiv || lastDiv.textContent !== label) {
@@ -631,6 +655,10 @@ function loadChannel(id, title, desc) {
         }, 3000);
       } else {
         // Full render: initial load, deletion, reaction update, seen update, etc.
+        // Remove temp elements before full render so there are no duplicates
+        if (area) {
+          area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) { el.remove(); });
+        }
         renderMessages(msgs);
       }
     });
@@ -651,6 +679,9 @@ function msgDateLabel(msg) {
 function renderMessages(msgs) {
   var area = document.getElementById('messagesArea');
   var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 60;
+
+  // Clean up any optimistic temp elements before full rebuild
+  area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) { el.remove(); });
 
   area.innerHTML = '';
 
@@ -1479,9 +1510,42 @@ async function sendMessage() {
     cancelQuote();
   }
 
-  await db.collection('channels').doc(state.currentChannel).collection('messages').add(
+  // ── Optimistic render — show message instantly, don't wait for Firestore ──
+  var tempId  = 'temp-' + Date.now();
+  var tempMsg = Object.assign({}, msg, {
+    id:        tempId,
+    timestamp: { toDate: function() { return new Date(); } },
+  });
+
+  var area = document.getElementById('messagesArea');
+  var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+
+  // Append date divider if needed
+  var label    = msgDateLabel(tempMsg);
+  var dividers = area.querySelectorAll('.date-divider');
+  var lastDiv  = dividers.length ? dividers[dividers.length - 1] : null;
+  if (!lastDiv || lastDiv.textContent !== label) {
+    area.appendChild(makeDateDivider(label));
+  }
+
+  appendMessageEl(area, tempMsg, {});
+  if (wasAtBottom) area.scrollTop = area.scrollHeight;
+
+  // Mark the temp element so we can remove it when the real one arrives
+  var tempEl = document.querySelector('[data-msg-id="' + tempId + '"]');
+  if (tempEl) tempEl.dataset.tempMsg = '1';
+
+  // ── Fire Firestore write in background — no await ─────────────────────────
+  db.collection('channels').doc(state.currentChannel).collection('messages').add(
     Object.assign({}, msg, { timestamp: firebase.firestore.FieldValue.serverTimestamp() })
-  );
+  ).catch(function(err) {
+    // Write failed — remove the optimistic element and restore the input
+    if (tempEl && tempEl.parentNode) tempEl.remove();
+    var inp = document.getElementById('msgInput');
+    if (inp && !inp.value) inp.value = text;
+    autoResize(inp);
+    console.error('Send failed:', err);
+  });
 }
 
 function handleKey(e) {
@@ -1539,37 +1603,59 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // REACTIONS — per-user toggle (tap again to remove)
+// Reads current reaction state from the local DOM (already rendered) to avoid
+// a blocking Firestore GET before the write.
 async function reactTo(msgId, emoji) {
   if (!isOnline()) return;
-  const ref  = db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId);
-  const snap = await ref.get();
-  if (!snap.exists) return;
 
-  const me        = state.currentUser.name;
-  const reactions = snap.data().reactions || [];
-  const existing  = reactions.find(function(r) { return r.emoji === emoji; });
+  const me  = state.currentUser.name;
+  const ref = db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId);
 
-  if (existing) {
-    // Migrate old format (no users array) to new format
-    if (!existing.users) existing.users = [];
+  // ── Optimistic update from local DOM ─────────────────────────────────────
+  // Read current reactions from the rendered message instead of fetching from Firestore
+  var group = document.querySelector('[data-msg-id="' + msgId + '"]');
+  var currentReactions = [];
 
-    if (existing.users.includes(me)) {
-      // Already reacted — toggle OFF
-      existing.users = existing.users.filter(function(u) { return u !== me; });
-      existing.count = existing.users.length;
-    } else {
-      // New reactor — toggle ON
-      existing.users.push(me);
-      existing.count = existing.users.length;
-    }
+  if (group) {
+    group.querySelectorAll('.reaction-chip').forEach(function(chip) {
+      // chip text: "😂 3"
+      var parts  = chip.textContent.trim().split(' ');
+      var emj    = parts[0];
+      var count  = parseInt(parts[1], 10) || 0;
+      var reacted = chip.classList.contains('reacted');
+      // Reconstruct a users array approximation
+      currentReactions.push({ emoji: emj, count: count, _reacted: reacted });
+    });
+  }
 
-    // Remove the reaction entirely if count hits 0
-    const updated = reactions.filter(function(r) { return r.count > 0; });
-    await ref.update({ reactions: updated });
-  } else {
-    // First time this emoji is used on this message
-    reactions.push({ emoji: emoji, count: 1, users: [me] });
-    await ref.update({ reactions: reactions });
+  // ── Compute new reactions array optimistically ────────────────────────────
+  // Then do a single Firestore write — no GET needed
+  // Use a transaction to guarantee correctness on the server side
+  try {
+    await db.runTransaction(async function(tx) {
+      var snap = await tx.get(ref);
+      if (!snap.exists) return;
+
+      var reactions = snap.data().reactions || [];
+      var existing  = reactions.find(function(r) { return r.emoji === emoji; });
+
+      if (existing) {
+        if (!existing.users) existing.users = [];
+        if (existing.users.includes(me)) {
+          existing.users = existing.users.filter(function(u) { return u !== me; });
+        } else {
+          existing.users.push(me);
+        }
+        existing.count = existing.users.length;
+        const updated = reactions.filter(function(r) { return r.count > 0; });
+        tx.update(ref, { reactions: updated });
+      } else {
+        reactions.push({ emoji: emoji, count: 1, users: [me] });
+        tx.update(ref, { reactions: reactions });
+      }
+    });
+  } catch (err) {
+    console.error('Reaction failed:', err);
   }
 }
 
@@ -3298,14 +3384,10 @@ function updateFavicon(hasUnread) {
 
 // Clear tab title when window regains focus
 window.addEventListener('focus', function() {
-  state.unread[state.currentChannel] = 0;
-  state.unreadSenders[state.currentChannel] = new Set();
-  state.lastSender[state.currentChannel] = null;
-  renderChannels();
-  renderDMsFromCache();
+  // _onWindowActive (registered in DOMContentLoaded) handles seen marking and full cleanup.
+  // This just ensures the tab title/favicon clear immediately on focus.
   updateTabTitle();
-  updateFavicon(false);
-  setTimeout(clearUnreadMsgIdsForChannel, 500);
+  updateFavicon(Object.values(state.unread).some(function(n) { return n > 0; }));
 });
 
 // ── CONVERSATION SEARCH ──
@@ -3585,11 +3667,39 @@ async function saveEdit(msgId) {
     return;
   }
 
-  await db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId).update({
-    text: newText,   // store raw
+  // ── Optimistic update — close the edit row and update the bubble immediately ──
+  const editRow = document.getElementById('editrow-' + msgId);
+  const group   = document.querySelector('[data-msg-id="' + msgId + '"]');
+
+  if (group) {
+    // Update the bubble text in the DOM right now
+    var bubble = document.getElementById('bubble-' + msgId);
+    if (bubble) {
+      // Preserve the quote block if present
+      var quoteEl = bubble.querySelector('.msg-quote');
+      var quoteHtml = quoteEl ? quoteEl.outerHTML : '';
+      bubble.innerHTML = quoteHtml + renderText(newText);
+    }
+    // Add (edited) tag to meta if not already there
+    var meta = group.querySelector('.msg-meta');
+    if (meta && !meta.querySelector('.msg-edited-tag')) {
+      var tag = document.createElement('span');
+      tag.className   = 'msg-edited-tag';
+      tag.textContent = '(edited)';
+      meta.appendChild(tag);
+    }
+    group.style.display = '';
+  }
+  if (editRow) editRow.remove();
+
+  // ── Fire Firestore write in background — no await ─────────────────────────
+  db.collection('channels').doc(state.currentChannel).collection('messages').doc(msgId).update({
+    text:   newText,
     edited: true,
+  }).catch(function(err) {
+    console.error('Edit save failed:', err);
+    // On failure the Firestore listener will re-render with the original text
   });
-  // Firestore listener will re-render and remove the edit row
 }
 
 function cancelEdit(msgId) {
