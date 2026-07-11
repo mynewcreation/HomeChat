@@ -38,7 +38,10 @@ async function handleLogin(e) {
 
     if (user.password !== pass) { errEl.textContent = 'Wrong password.'; return; }
 
-    await doc.ref.update({ status: 'online' }).catch(function() {});
+    await doc.ref.update({
+      status:   'online',
+      lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(function() {});
 
     sessionStorage.setItem('teamsUser', JSON.stringify({
       id: doc.id, name: user.name, color: user.color, status: 'online',
@@ -77,6 +80,7 @@ async function handleRegister(e) {
     const ref   = await db.collection('users').add({
       name, nameLower: name.toLowerCase(),
       password: pass, color, status: 'online',
+      lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
     });
 
     sessionStorage.setItem('teamsUser', JSON.stringify({

@@ -89,6 +89,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
   window.addEventListener('beforeunload', markOffline);
+  // pagehide is more reliable than beforeunload on mobile (fires when tab is backgrounded/closed)
+  window.addEventListener('pagehide', markOffline);
+  // Also mark offline when tab becomes hidden (mobile background, tab switch)
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') {
+      markOffline();
+    } else if (document.visibilityState === 'visible') {
+      // Mark back online when tab becomes visible again
+      if (state.currentUser.id) {
+        db.collection('users').doc(state.currentUser.id)
+          .update({ status: state.currentUser.status || 'online', lastSeen: firebase.firestore.FieldValue.serverTimestamp() })
+          .catch(function() {});
+      }
+    }
+  });
+
+  // Heartbeat — update lastSeen every 30s so stale sessions can be detected
+  setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    if (state.currentUser.id) {
+      db.collection('users').doc(state.currentUser.id)
+        .update({ lastSeen: firebase.firestore.FieldValue.serverTimestamp() })
+        .catch(function() {});
+    }
+  }, 30000);
 
   // Mark current channel as seen when user returns to the window
   function _onWindowActive() {
@@ -232,7 +257,8 @@ function renderDMs(users, filter) {
     div.onclick   = function() { loadChannelAndCloseSidebar(dmId, nickname, 'Direct message with ' + nickname); };
 
     const dot = document.createElement('span');
-    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(u.status) + ';display:inline-block;flex-shrink:0;';
+    var effStatus = _effectiveStatus(u);
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:' + statusColor(effStatus) + ';display:inline-block;flex-shrink:0;';
 
     const nameSpan = document.createElement('span');
     nameSpan.textContent = nickname;
@@ -436,12 +462,13 @@ function openNewDmModal(users) {
     .filter(function(u) { return u.name !== state.currentUser.name; });
 
   var rows = others.map(function(u) {
-    var dmId = dmChannelId(state.currentUser.name, u.name);
-    var hasMsgs = (state.dmLastActivity[dmId] || 0) > 0;
+    var dmId     = dmChannelId(state.currentUser.name, u.name);
+    var hasMsgs  = (state.dmLastActivity[dmId] || 0) > 0;
+    var effSt    = _effectiveStatus(u);
     return '<div class="new-dm-row" onclick="startDmWith(\'' + escapeHtml(u.name) + '\')">' +
       '<div class="user-avatar" style="background:' + u.color + ';width:28px;height:28px;font-size:12px;flex-shrink:0">' + u.name[0] + '</div>' +
       '<span style="flex:1;font-size:13px">' + escapeHtml(u.name) + '</span>' +
-      '<span style="font-size:10px;color:' + statusColor(u.status || 'offline') + '">' + (u.status || 'offline') + '</span>' +
+      '<span style="font-size:10px;color:' + statusColor(effSt) + '">' + effSt + '</span>' +
       (hasMsgs ? '<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">existing</span>' : '') +
     '</div>';
   }).join('');
@@ -517,7 +544,7 @@ function renderMembers(users) {
     div.innerHTML =
       '<div class="user-avatar" style="background:' + u.color + ';width:30px;height:30px;font-size:12px;flex-shrink:0">' + u.name[0] + '</div>' +
       '<span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(u.name) + (isSelf ? ' <span style="font-size:10px;color:var(--text-muted)">(you)</span>' : '') + '</span>' +
-      '<span class="dot ' + (u.status || 'offline') + '"></span>';
+      '<span class="dot ' + _effectiveStatus(u) + '"></span>';
 
     // Add ... menu button: admin can manage all users; anyone can remove themselves
     if (isSelf || isAdmin) {
@@ -2322,13 +2349,14 @@ async function buildParticipantsList(channelId) {
   usersSnap.docs.forEach(function(d) {
     const u       = d.data();
     const checked = currentParticipants.length === 0 || currentParticipants.includes(u.name);
+    const effSt   = _effectiveStatus(u);
     const row     = document.createElement('div');
     row.className = 'participant-row';
     row.innerHTML =
       '<input type="checkbox" id="pcheck_' + d.id + '" value="' + u.name + '" ' + (checked ? 'checked' : '') + '>' +
       '<div class="p-avatar" style="background:' + u.color + '">' + u.name[0] + '</div>' +
       '<label for="pcheck_' + d.id + '" style="cursor:pointer;flex:1">' + u.name + '</label>' +
-      '<span style="font-size:11px;color:' + statusColor(u.status || 'offline') + '">' + (u.status || 'offline') + '</span>';
+      '<span style="font-size:11px;color:' + statusColor(effSt) + '">' + effSt + '</span>';
     container.appendChild(row);
   });
 }
@@ -2592,7 +2620,10 @@ async function logout() {
 
 async function markOffline() {
   if (state.currentUser.id) {
-    await db.collection('users').doc(state.currentUser.id).update({ status: 'offline' }).catch(function() {});
+    await db.collection('users').doc(state.currentUser.id).update({
+      status:   'offline',
+      lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(function() {});
   }
 }
 
@@ -2852,8 +2883,8 @@ async function openVideoCall() {
     targetName = matched ? matched.name : otherSlug;
 
     // Check if the target user is online before calling
-    var targetUser = _lastKnownUsers.find(function(u) { return u.name === targetName; });
-    var targetStatus = targetUser ? (targetUser.status || 'offline') : 'offline';
+    var targetUser   = _lastKnownUsers.find(function(u) { return u.name === targetName; });
+    var targetStatus = _effectiveStatus(targetUser);
 
     if (targetStatus === 'offline') {
       if (!confirm(targetName + ' is currently offline.\nCall anyway? They may not answer.')) return;
@@ -2882,8 +2913,8 @@ function _showCallPickerModal() {
   // Sort: online first, then away/busy, then offline
   var statusOrder = { online: 0, away: 1, busy: 2, offline: 3 };
   others.sort(function(a, b) {
-    var sa = statusOrder[a.status || 'offline'] || 3;
-    var sb = statusOrder[b.status || 'offline'] || 3;
+    var sa = statusOrder[_effectiveStatus(a)] || 3;
+    var sb = statusOrder[_effectiveStatus(b)] || 3;
     if (sa !== sb) return sa - sb;
     return a.name.localeCompare(b.name);
   });
@@ -2893,7 +2924,7 @@ function _showCallPickerModal() {
   overlay.id = 'callPickerModal';
 
   var rows = others.map(function(u) {
-    var st       = u.status || 'offline';
+    var st        = _effectiveStatus(u);
     var isOffline = st === 'offline';
     var isBusy    = st === 'busy';
     var stColor   = statusColor(st);
@@ -2933,7 +2964,7 @@ function _showCallPickerModal() {
 
 function _pickCallTarget(name) {
   var user = _lastKnownUsers.find(function(u) { return u.name === name; });
-  var st   = user ? (user.status || 'offline') : 'offline';
+  var st   = _effectiveStatus(user);
 
   if (st === 'offline') {
     if (!confirm(name + ' is offline.\nCall anyway? They may not answer.')) return;
@@ -3493,6 +3524,22 @@ function highlightInElement(el, query) {
 }
 function statusColor(s) {
   return { online: '#2ecc71', away: '#f1c40f', busy: '#e74c3c', offline: '#95a5a6' }[s] || '#95a5a6';
+}
+
+// Returns the effective status of a user, treating stale lastSeen as offline.
+// A user is considered offline if their lastSeen is older than 2 minutes,
+// regardless of what the status field says (handles crashed tabs, killed browsers, etc.)
+function _effectiveStatus(user) {
+  if (!user) return 'offline';
+  var s = user.status || 'offline';
+  if (s === 'offline') return 'offline';
+  // Check lastSeen timestamp
+  if (user.lastSeen) {
+    var ts = user.lastSeen.toDate ? user.lastSeen.toDate() : new Date(user.lastSeen);
+    var ageMs = Date.now() - ts.getTime();
+    if (ageMs > 2 * 60 * 1000) return 'offline'; // stale — treat as offline
+  }
+  return s;
 }
 
 // Call on load
