@@ -1508,7 +1508,7 @@ function makeDateDivider(label) {
 // SEND MESSAGE
 async function sendMessage() {
   const input = document.getElementById('msgInput');
-  const text  = input.value.trim();
+  var   text  = input.value.trim();
 
   // If there's a file pending, upload it — caption text is included in the same message
   if (_pendingFiles.length > 0) {
@@ -1516,6 +1516,13 @@ async function sendMessage() {
     autoResize(input);
     await uploadPendingFile(text);
     return;
+  }
+
+  // Collect table markdown before clearing input
+  var tableMarkdown = tableEditorGetMarkdown();
+  if (tableMarkdown) {
+    tableEditorCancel();
+    text = text ? text + '\n' + tableMarkdown : tableMarkdown;
   }
 
   if (!text) return;
@@ -1610,9 +1617,12 @@ document.addEventListener('DOMContentLoaded', function() {
   var msgInput = document.getElementById('msgInput');
   if (!msgInput) return;
   msgInput.addEventListener('paste', function(e) {
-    var items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
+    var cd = e.clipboardData;
+    if (!cd) return;
+
+    // ── Priority 1: image paste ───────────────────────────────────────────
     var imageFiles = [];
+    var items = cd.items || [];
     for (var i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
         var file = items[i].getAsFile();
@@ -1625,11 +1635,147 @@ document.addEventListener('DOMContentLoaded', function() {
     if (imageFiles.length > 0) {
       e.preventDefault();
       addFilesToPending(imageFiles);
+      return;
     }
+
+    // ── Priority 2: HTML table paste (from Excel / Sheets / Word) ────────
+    var htmlData = cd.getData('text/html');
+    if (htmlData && /<table/i.test(htmlData)) {
+      e.preventDefault();
+      _pasteHtmlTableToEditor(htmlData);
+      return;
+    }
+
+    // ── Priority 3: plain text that looks like a markdown table ──────────
+    var plainText = cd.getData('text/plain');
+    if (plainText && /^\s*\|.+\|\s*$/m.test(plainText)) {
+      e.preventDefault();
+      _pasteMarkdownTableToEditor(plainText);
+      return;
+    }
+    // All other plain text falls through to default browser paste
   });
 });
 
-// REACTIONS — per-user toggle (tap again to remove)
+// Convert an HTML table (from clipboard) to markdown table syntax
+function _htmlTableToMarkdown(html) {
+  // Parse into a temporary DOM element
+  var div = document.createElement('div');
+  div.innerHTML = html;
+  var table = div.querySelector('table');
+  if (!table) return '';
+
+  var rows = Array.from(table.querySelectorAll('tr'));
+  if (!rows.length) return '';
+
+  var mdRows = rows.map(function(row) {
+    var cells = Array.from(row.querySelectorAll('th, td'));
+    return '| ' + cells.map(function(cell) {
+      // Clean up cell text: collapse whitespace, strip inner HTML
+      return cell.innerText.replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|');
+    }).join(' | ') + ' |';
+  });
+
+  // Detect if first row has <th> — treat as header
+  var hasHeader = rows[0] && rows[0].querySelector('th');
+  if (hasHeader && mdRows.length >= 1) {
+    var cols   = rows[0].querySelectorAll('th, td').length;
+    var sepRow = '| ' + Array(cols).fill('---').join(' | ') + ' |';
+    mdRows.splice(1, 0, sepRow);
+  }
+
+  return mdRows.join('\n');
+}
+
+// Paste an HTML table (from Excel/Sheets/Word) into the visual table editor
+function _pasteHtmlTableToEditor(html) {
+  var div = document.createElement('div');
+  div.innerHTML = html;
+  var table = div.querySelector('table');
+  if (!table) return;
+
+  var rows = Array.from(table.querySelectorAll('tr'));
+  if (!rows.length) return;
+
+  // First row = headers if it has <th> cells
+  var firstRow    = rows[0];
+  var hasHeader   = !!firstRow.querySelector('th');
+  var headerCells = Array.from(firstRow.querySelectorAll('th, td'))
+                        .map(function(c) { return (c.innerText || c.textContent).replace(/\s+/g,' ').trim(); });
+  var dataRows    = (hasHeader ? rows.slice(1) : rows).map(function(tr) {
+    return Array.from(tr.querySelectorAll('th, td'))
+               .map(function(c) { return (c.innerText || c.textContent).replace(/\s+/g,' ').trim(); });
+  });
+
+  _openEditorWithData(headerCells, dataRows);
+}
+
+// Paste a markdown-style table (pipe-separated) into the visual table editor
+function _pasteMarkdownTableToEditor(text) {
+  var lines = text.split('\n').map(function(l) { return l.trim(); })
+                  .filter(function(l) { return /^\|.+\|$/.test(l); });
+  if (!lines.length) return;
+
+  function parseLine(line) {
+    return line.replace(/^\||\|$/g, '').split('|').map(function(c) { return c.trim(); });
+  }
+  function isSep(line) { return /^\|[\s\-:|]+\|$/.test(line); }
+
+  var headers  = parseLine(lines[0]);
+  var dataStart = (lines.length > 1 && isSep(lines[1])) ? 2 : 1;
+  var dataRows  = lines.slice(dataStart).map(parseLine);
+
+  _openEditorWithData(headers, dataRows);
+}
+
+// Build the visual table editor from data arrays
+function _openEditorWithData(headers, dataRows) {
+  var bar  = document.getElementById('tableEditorBar');
+  var head = document.getElementById('tebHead');
+  var body = document.getElementById('tebBody');
+  if (!bar || !head || !body) return;
+
+  head.innerHTML = '';
+  body.innerHTML = '';
+
+  var cols = headers.length;
+
+  // Header row
+  var headTr = document.createElement('tr');
+  headers.forEach(function(text) {
+    var th = document.createElement('th');
+    th.contentEditable = 'true';
+    th.className = 'teb-cell teb-head-cell';
+    th.textContent = text;
+    _tebCellEvents(th);
+    headTr.appendChild(th);
+  });
+  headTr.appendChild(_tebAddColHandle());
+  head.appendChild(headTr);
+
+  // Data rows
+  dataRows.forEach(function(rowData) {
+    var tr = document.createElement('tr');
+    tr.className = 'teb-data-row';
+    // Pad or trim to match header column count
+    for (var c = 0; c < cols; c++) {
+      var td = document.createElement('td');
+      td.contentEditable = 'true';
+      td.className = 'teb-cell';
+      td.textContent = rowData[c] || '';
+      _tebCellEvents(td);
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  });
+  body.appendChild(_tebAddRowHandle(cols));
+
+  bar.style.display = 'flex';
+
+  // Focus the first data cell
+  var firstData = body.querySelector('.teb-cell');
+  if (firstData) firstData.focus();
+}
 // Reads current reaction state from the local DOM (already rendered) to avoid
 // a blocking Firestore GET before the write.
 async function reactTo(msgId, emoji) {
@@ -1998,6 +2144,310 @@ var _emojiData = {
 };
 
 var _currentEmojiCat = 'recent';
+
+// ── TABLE PICKER ─────────────────────────────────────────────────────────────
+var _tpMaxRows = 8, _tpMaxCols = 8;
+
+function toggleTablePicker() {
+  var picker = document.getElementById('tablePicker');
+  if (!picker) return;
+  var isOpen = picker.classList.contains('show');
+  if (isOpen) { picker.classList.remove('show'); return; }
+
+  // Build grid once if empty
+  if (!document.getElementById('tpGrid').children.length) {
+    _buildTpGrid();
+  }
+  _highlightTpGrid(2, 2);
+  document.getElementById('tpLabel').textContent = '2 × 2 table';
+  picker.classList.add('show');
+
+  // Position above the table button
+  var btn = document.querySelector('.table-btn');
+  if (btn) {
+    // Measure after showing
+    requestAnimationFrame(function() {
+      var rect = btn.getBoundingClientRect();
+      var pw   = picker.offsetWidth  || 210;
+      var ph   = picker.offsetHeight || 210;
+      var left = Math.max(8, Math.min(rect.left, window.innerWidth - pw - 8));
+      var top  = rect.top - ph - 8;
+      if (top < 8) top = rect.bottom + 8;
+      picker.style.left = left + 'px';
+      picker.style.top  = top  + 'px';
+    });
+  }
+}
+
+// Build the grid cells once — reuse them every time the picker opens
+function _buildTpGrid() {
+  var grid  = document.getElementById('tpGrid');
+  var label = document.getElementById('tpLabel');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  for (var r = 1; r <= _tpMaxRows; r++) {
+    for (var c = 1; c <= _tpMaxCols; c++) {
+      var cell = document.createElement('div');
+      cell.className   = 'tp-cell';
+      cell.dataset.r   = r;
+      cell.dataset.c   = c;
+      grid.appendChild(cell);
+    }
+  }
+
+  // Single delegated mouseover on the grid — no per-cell listeners
+  grid.addEventListener('mouseover', function(e) {
+    var cell = e.target.closest('.tp-cell');
+    if (!cell) return;
+    var row = parseInt(cell.dataset.r, 10);
+    var col = parseInt(cell.dataset.c, 10);
+    _highlightTpGrid(row, col);
+    if (label) label.textContent = row + ' × ' + col + ' table';
+  });
+
+  // Single delegated click on the grid
+  grid.addEventListener('click', function(e) {
+    var cell = e.target.closest('.tp-cell');
+    if (!cell) return;
+    var row = parseInt(cell.dataset.r, 10);
+    var col = parseInt(cell.dataset.c, 10);
+    document.getElementById('tablePicker').classList.remove('show');
+    _insertTableTemplate(row, col);
+  });
+}
+
+function _highlightTpGrid(highlightRows, highlightCols) {
+  var cells = document.querySelectorAll('#tpGrid .tp-cell');
+  cells.forEach(function(cell) {
+    var r = parseInt(cell.dataset.r, 10);
+    var c = parseInt(cell.dataset.c, 10);
+    if (r <= highlightRows && c <= highlightCols) {
+      cell.classList.add('tp-active');
+    } else {
+      cell.classList.remove('tp-active');
+    }
+  });
+}
+
+function _insertTableTemplate(rows, cols) {
+  // Show the visual table editor instead of inserting pipe-text
+  tableEditorOpen(rows, cols);
+}
+
+// ── VISUAL TABLE EDITOR ───────────────────────────────────────────────────────
+function tableEditorOpen(rows, cols) {
+  var bar  = document.getElementById('tableEditorBar');
+  var head = document.getElementById('tebHead');
+  var body = document.getElementById('tebBody');
+  if (!bar || !head || !body) return;
+
+  head.innerHTML = '';
+  body.innerHTML = '';
+
+  // Build header row
+  var headTr = document.createElement('tr');
+  for (var c = 0; c < cols; c++) {
+    var th = document.createElement('th');
+    th.contentEditable = 'true';
+    th.className  = 'teb-cell teb-head-cell';
+    th.dataset.placeholder = 'Header ' + (c + 1);
+    _tebCellEvents(th);
+    headTr.appendChild(th);
+  }
+  // Add/remove column handle
+  headTr.appendChild(_tebAddColHandle());
+  head.appendChild(headTr);
+
+  // Build data rows
+  for (var r = 0; r < rows - 1; r++) {
+    body.appendChild(_tebMakeRow(cols));
+  }
+  body.appendChild(_tebAddRowHandle(cols));
+
+  bar.style.display = 'flex';
+  // Focus the first header cell
+  var firstCell = head.querySelector('.teb-head-cell');
+  if (firstCell) { firstCell.focus(); _tebPlaceholderCheck(firstCell); }
+}
+
+function _tebMakeRow(cols) {
+  var tr = document.createElement('tr');
+  tr.className = 'teb-data-row';
+  for (var c = 0; c < cols; c++) {
+    var td = document.createElement('td');
+    td.contentEditable = 'true';
+    td.className = 'teb-cell';
+    _tebCellEvents(td);
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+function _tebAddColHandle() {
+  var th = document.createElement('th');
+  th.className = 'teb-add-col';
+  th.title = 'Add column';
+  th.textContent = '+';
+  th.addEventListener('click', tableEditorAddCol);
+  return th;
+}
+
+function _tebAddRowHandle(cols) {
+  var tr = document.createElement('tr');
+  tr.className = 'teb-add-row-row';
+  var td = document.createElement('td');
+  td.colSpan = cols + 1;
+  td.className = 'teb-add-row';
+  td.title = 'Add row';
+  td.textContent = '+ Add row';
+  td.addEventListener('click', tableEditorAddRow);
+  tr.appendChild(td);
+  return tr;
+}
+
+function _tebCellEvents(cell) {
+  cell.addEventListener('focus',  function() { _tebPlaceholderCheck(cell); });
+  cell.addEventListener('blur',   function() { _tebPlaceholderCheck(cell); });
+  cell.addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      _tebTabNav(cell, e.shiftKey);
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      // Move to next row same column, or create new row
+      var allCells  = Array.from(document.querySelectorAll('#tebTable .teb-cell'));
+      var idx       = allCells.indexOf(cell);
+      var colCount  = document.querySelectorAll('#tebHead .teb-head-cell').length;
+      var nextIdx   = idx + colCount;
+      if (nextIdx < allCells.length) {
+        allCells[nextIdx].focus();
+      } else {
+        tableEditorAddRow();
+        setTimeout(function() {
+          var newCells = Array.from(document.querySelectorAll('#tebTable .teb-cell'));
+          var col = idx % colCount;
+          if (newCells[newCells.length - colCount + col]) {
+            newCells[newCells.length - colCount + col].focus();
+          }
+        }, 10);
+      }
+    }
+  });
+}
+
+function _tebPlaceholderCheck(cell) {
+  if (cell.textContent.trim() === '') {
+    cell.classList.add('teb-empty');
+  } else {
+    cell.classList.remove('teb-empty');
+  }
+}
+
+function _tebTabNav(cell, reverse) {
+  var allCells = Array.from(document.querySelectorAll('#tebTable .teb-cell'));
+  var idx = allCells.indexOf(cell);
+  var next = reverse ? allCells[idx - 1] : allCells[idx + 1];
+  if (next) {
+    next.focus();
+    // Select all text in cell
+    var range = document.createRange();
+    range.selectNodeContents(next);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+function tableEditorAddCol() {
+  var head      = document.getElementById('tebHead');
+  var body      = document.getElementById('tebBody');
+  var headRow   = head.querySelector('tr');
+  var colHandle = headRow.querySelector('.teb-add-col');
+
+  // New header cell
+  var th = document.createElement('th');
+  th.contentEditable = 'true';
+  th.className = 'teb-cell teb-head-cell';
+  var colNum = headRow.querySelectorAll('.teb-head-cell').length + 1;
+  th.dataset.placeholder = 'Header ' + colNum;
+  _tebCellEvents(th);
+  headRow.insertBefore(th, colHandle);
+
+  // New data cell in each data row
+  body.querySelectorAll('.teb-data-row').forEach(function(tr) {
+    var td = document.createElement('td');
+    td.contentEditable = 'true';
+    td.className = 'teb-cell';
+    _tebCellEvents(td);
+    tr.appendChild(td);
+  });
+
+  // Update add-row colspan
+  var addRow = body.querySelector('.teb-add-row');
+  if (addRow) addRow.colSpan = headRow.querySelectorAll('.teb-head-cell').length + 1;
+
+  th.focus();
+}
+
+function tableEditorAddRow() {
+  var body     = document.getElementById('tebBody');
+  var addRowTr = body.querySelector('.teb-add-row-row');
+  var cols     = document.querySelectorAll('#tebHead .teb-head-cell').length;
+  var newRow   = _tebMakeRow(cols);
+  body.insertBefore(newRow, addRowTr);
+  newRow.querySelector('.teb-cell').focus();
+}
+
+function tableEditorCancel() {
+  var bar  = document.getElementById('tableEditorBar');
+  var head = document.getElementById('tebHead');
+  var body = document.getElementById('tebBody');
+  if (bar)  bar.style.display = 'none';
+  if (head) head.innerHTML = '';
+  if (body) body.innerHTML = '';
+}
+
+// Called by sendMessage — converts the visual table to markdown
+function tableEditorGetMarkdown() {
+  var bar = document.getElementById('tableEditorBar');
+  if (!bar || bar.style.display === 'none') return null;
+
+  var headerCells = Array.from(document.querySelectorAll('#tebHead .teb-head-cell'));
+  if (!headerCells.length) return null;
+
+  var headers = headerCells.map(function(th) {
+    return (th.innerText || th.textContent).trim() || ' ';
+  });
+  var sep  = headers.map(function() { return '---'; });
+
+  var rows = [];
+  document.querySelectorAll('#tebBody .teb-data-row').forEach(function(tr) {
+    var cells = Array.from(tr.querySelectorAll('.teb-cell')).map(function(td) {
+      return (td.innerText || td.textContent).trim() || ' ';
+    });
+    rows.push(cells);
+  });
+
+  var md  = '| ' + headers.join(' | ') + ' |\n';
+  md     += '| ' + sep.join(' | ') + ' |\n';
+  rows.forEach(function(row) {
+    md += '| ' + row.join(' | ') + ' |\n';
+  });
+
+  return md.trim();
+}
+
+// Close table picker on outside click
+document.addEventListener('mousedown', function(e) {
+  var picker = document.getElementById('tablePicker');
+  if (picker && picker.classList.contains('show')) {
+    if (!picker.contains(e.target) && !e.target.closest('.table-btn')) {
+      picker.classList.remove('show');
+    }
+  }
+});
 
 function toggleEmojiPicker() {
   var picker = document.getElementById('emojiPicker');
@@ -3316,9 +3766,109 @@ function renderText(str) {
   if (isEmojiOnly(str)) {
     return '<span class="emoji-large">' + escapeHtml(str) + '</span>';
   }
-  var escaped = escapeHtml(str);
-  escaped = escaped.replace(/\n/g, '<br>');
-  return linkify(escaped);
+
+  // ── Markdown table detection ──────────────────────────────────────────────
+  // A table block is consecutive lines that start and end with |
+  // e.g.  | Name | Age |
+  //       | ---- | --- |
+  //       | Mark | 30  |
+  var lines = str.split('\n');
+  var result = [];
+  var i = 0;
+  while (i < lines.length) {
+    var line = lines[i];
+    // Check if this line looks like a table row
+    if (/^\s*\|.+\|\s*$/.test(line)) {
+      // Collect all consecutive table lines
+      var tableLines = [];
+      while (i < lines.length && /^\s*\|.+\|\s*$/.test(lines[i])) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      result.push(_renderMarkdownTable(tableLines));
+    } else {
+      result.push(escapeHtml(line));
+      i++;
+    }
+  }
+
+  var out = result.join('<br>');
+  // Remove <br> immediately before/after a table (cleaner spacing)
+  out = out.replace(/<br>(<table)/g, '$1').replace(/(<\/table>)<br>/g, '$1');
+  return linkify(out);
+}
+
+// Convert an array of markdown table lines to an HTML table string
+function _renderMarkdownTable(lines) {
+  if (!lines.length) return '';
+
+  // Parse each row into cells by splitting on |
+  function parseCells(line) {
+    return line.trim()
+      .replace(/^\||\|$/g, '') // strip leading/trailing |
+      .split('|')
+      .map(function(c) { return c.trim(); });
+  }
+
+  // Detect separator row (e.g. | --- | :---: | ---: |)
+  function isSeparator(line) {
+    return /^\s*\|[\s\-:|]+\|\s*$/.test(line);
+  }
+
+  var headerRow  = null;
+  var dataRows   = [];
+  var alignments = []; // 'left' | 'center' | 'right'
+  var sepFound   = false;
+
+  lines.forEach(function(line) {
+    if (!sepFound && isSeparator(line)) {
+      sepFound = true;
+      // Parse alignment hints from separator
+      parseCells(line).forEach(function(cell) {
+        if (/^:-+:$/.test(cell))      alignments.push('center');
+        else if (/^-+:$/.test(cell))  alignments.push('right');
+        else                          alignments.push('left');
+      });
+    } else if (!sepFound && headerRow === null) {
+      headerRow = parseCells(line);
+    } else if (sepFound) {
+      dataRows.push(parseCells(line));
+    } else {
+      dataRows.push(parseCells(line));
+    }
+  });
+
+  // If no separator found, treat first row as header
+  if (!sepFound && lines.length > 1) {
+    headerRow = parseCells(lines[0]);
+    dataRows  = lines.slice(1).map(parseCells);
+  } else if (!sepFound) {
+    // Single row, no header — render as data
+    dataRows  = lines.map(parseCells);
+  }
+
+  var html = '<table class="msg-table"><tbody>';
+
+  if (headerRow) {
+    html += '<thead><tr>';
+    headerRow.forEach(function(cell, idx) {
+      var align = alignments[idx] || 'left';
+      html += '<th style="text-align:' + align + '">' + linkify(escapeHtml(cell)) + '</th>';
+    });
+    html += '</tr></thead>';
+  }
+
+  html += '<tbody>';
+  dataRows.forEach(function(cells) {
+    html += '<tr>';
+    cells.forEach(function(cell, idx) {
+      var align = alignments[idx] || 'left';
+      html += '<td style="text-align:' + align + '">' + linkify(escapeHtml(cell)) + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
 }
 
 // Get a user's color (for seen avatars)
