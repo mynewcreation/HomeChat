@@ -62,33 +62,6 @@ h1 {
   margin-bottom: 24px;
 }
 
-/* ── Tabs ── */
-.tabs {
-  display: flex;
-  border-bottom: 2px solid var(--border);
-  margin-bottom: 20px;
-}
-
-.tab {
-  flex: 1;
-  padding: 9px;
-  background: none;
-  border: none;
-  font-size: 14px;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-family: 'Segoe UI', sans-serif;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -2px;
-  transition: all 0.2s;
-}
-
-.tab.active {
-  color: #fff;
-  border-bottom-color: var(--purple-light);
-  font-weight: 600;
-}
-
 /* ── Form ── */
 .form-group {
   position: relative;

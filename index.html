@@ -11,13 +11,7 @@
   <div class="login-box">
     <img src="M-LOGO.png" alt="Logo" class="login-logo" onerror="this.style.display='none'">
     <h1>MyHome Connect</h1>
-    <p class="subtitle">Sign in or create an account</p>
-
-    <!-- Tabs -->
-    <div class="tabs">
-      <button id="loginTab" class="tab active" onclick="showTab('login')">Sign In</button>
-      <button id="registerTab" class="tab" onclick="showTab('register')">Register</button>
-    </div>
+    <p class="subtitle">Sign in to your account</p>
 
     <!-- Login Form -->
     <div id="loginForm">
@@ -32,26 +26,6 @@
         </div>
         <p class="error-msg" id="loginError"></p>
         <button type="submit" class="login-btn">Sign In</button>
-      </form>
-    </div>
-
-    <!-- Register Form -->
-    <div id="registerForm" style="display:none">
-      <form onsubmit="handleRegister(event)">
-        <div class="form-group">
-          <input type="text" id="regUsername" placeholder=" " required>
-          <label>Username</label>
-        </div>
-        <div class="form-group">
-          <input type="password" id="regPassword" placeholder=" " required>
-          <label>Password</label>
-        </div>
-        <div class="form-group">
-          <input type="password" id="regConfirm" placeholder=" " required>
-          <label>Confirm Password</label>
-        </div>
-        <p class="error-msg" id="registerError"></p>
-        <button type="submit" class="login-btn">Create Account</button>
       </form>
     </div>
   </div>

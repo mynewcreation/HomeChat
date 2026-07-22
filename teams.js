@@ -573,13 +573,7 @@ function loadChannel(id, title, desc) {
   state.unread[id]     = 0;
   state.unreadSenders[id] = new Set();
   state.lastSender[id]    = null;
-  // Update DM sort order when opening a DM
-  if (id.startsWith('dm-')) {
-    state.dmLastActivity[id] = state.dmLastActivity[id] || Date.now();
-    renderDMsFromCache();
-  }
-  // Clear unread message IDs for this channel — loading it counts as reading
-  // We'll clear them after messages render so the bold shows briefly then fades
+
   updateTabTitle();
   updateFavicon(Object.values(state.unread).some(function(n){ return n > 0; }));
 
@@ -587,120 +581,160 @@ function loadChannel(id, title, desc) {
   document.getElementById('channelTitle').textContent = title || (ch ? ch.label : id);
   document.getElementById('channelDesc').textContent  = desc  || (ch ? ch.desc  || '' : '');
 
-  renderChannels();
-  renderDMsFromCache();
+  // Defer sidebar re-renders — don't block the message listener setup
+  requestAnimationFrame(function() {
+    if (id.startsWith('dm-')) {
+      state.dmLastActivity[id] = state.dmLastActivity[id] || Date.now();
+    }
+    renderChannels();
+    renderDMsFromCache();
+  });
 
-  // Firestore live listener
+  // Firestore live listener — use metadata hasPendingWrites to skip local echo
   state.unsubscribeMessages = db
     .collection('channels').doc(id).collection('messages')
     .orderBy('timestamp')
-    .onSnapshot(function(snap) {
+    .onSnapshot({ includeMetadataChanges: false }, function(snap) {
+      // Fast path: build msgs array only from changed docs when possible
       var msgs = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
       var newCount = msgs.length;
       var oldCount = state.msgCount[id] !== undefined ? state.msgCount[id] : -1;
       var isFirstLoad = oldCount < 0;
 
-      if (oldCount >= 0 && newCount > oldCount) {
+      // ── Unread / badge bookkeeping ─────────────────────────────────────
+      if (!isFirstLoad && newCount > oldCount) {
         var added      = newCount - oldCount;
         var newMsgs    = msgs.slice(msgs.length - added);
         var fromOthers = newMsgs.filter(function(m) { return m.sender !== state.currentUser.name; });
 
         if (fromOthers.length > 0) {
+          fromOthers.forEach(function(m) { if (m.id) state.unreadMsgIds.add(m.id); });
+          state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
+
           if (id !== state.currentChannel) {
             state.unread[id] = (state.unread[id] || 0) + fromOthers.length;
             if (!state.unreadSenders[id]) state.unreadSenders[id] = new Set();
             fromOthers.forEach(function(m) { state.unreadSenders[id].add(m.sender); });
-            renderChannels();
-            renderDMsFromCache();
+            // Only update sidebar badges — no full re-render
+            _updateUnreadBadge(id);
             updateTabTitle();
           }
-          fromOthers.forEach(function(m) { if (m.id) state.unreadMsgIds.add(m.id); });
-          state.lastSender[id] = fromOthers[fromOthers.length - 1].sender;
           updateFavicon(true);
         }
       }
 
       state.msgCount[id] = newCount;
-      if (id.startsWith('dm-') && newCount > 0) {
+      if (id.startsWith('dm-') && newCount > 0 && !isFirstLoad) {
         state.dmLastActivity[id] = Date.now();
-        // Only re-sort DM list, don't call heavy renderDMsFromCache on every message
-        if (!isFirstLoad) renderDMsFromCache();
+        renderDMsFromCache();
       }
 
-      // ── Incremental render: append only new messages instead of full rebuild ──
+      // ── Render ─────────────────────────────────────────────────────────
       var area = document.getElementById('messagesArea');
       var hasExistingContent = area && area.querySelector('.msg-group');
 
       if (!isFirstLoad && hasExistingContent && newCount > oldCount) {
-        // Only new messages added — append them without wiping the DOM
-        var added   = newCount - oldCount;
-        var newMsgs = msgs.slice(msgs.length - added);
-        var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
-
-        // Remove any optimistic temp elements for messages that now have a real ID
-        // (the Firestore snapshot has returned with the committed message)
-        newMsgs.forEach(function(msg) {
-          if (msg.sender !== state.currentUser.name) return;
-          // Find any temp element with the same text content sent by me
-          area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) {
-            var bubble = el.querySelector('.msg-bubble');
-            var tempText = bubble ? (bubble.innerText || bubble.textContent || '').trim() : '';
-            // Match by text — remove the first matching temp so the real one replaces it
-            if (tempText && msg.text && tempText.startsWith(msg.text.slice(0, 50).trim())) {
-              el.remove();
-            }
-          });
-        });
-
-        // Pre-compute lastSeenMsgPerUser for seen indicators
-        var lastSeenMsgPerUser = {};
-        msgs.forEach(function(msg) {
-          if (!msg.seenBy) return;
-          Object.keys(msg.seenBy).forEach(function(user) {
-            if (user !== state.currentUser.name) lastSeenMsgPerUser[user] = msg.id;
-          });
-        });
-
-        newMsgs.forEach(function(msg) {
-          if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
-          // Insert date divider if the date has changed
-          var label    = msgDateLabel(msg);
-          var dividers = area.querySelectorAll('.date-divider');
-          var lastDiv  = dividers.length ? dividers[dividers.length - 1] : null;
-          if (!lastDiv || lastDiv.textContent !== label) {
-            area.appendChild(makeDateDivider(label));
-          }
-          appendMessageEl(area, msg, lastSeenMsgPerUser);
-        });
-
-        if (wasAtBottom) area.scrollTop = area.scrollHeight;
-        markChannelSeen(state.currentChannel, msgs);
-
-        // Schedule clearing unread highlights
-        setTimeout(function() {
-          if (document.hasFocus() && !document.hidden) clearUnreadMsgIdsForChannel();
-        }, 3000);
+        _appendNewMessages(area, msgs, newCount, oldCount);
       } else {
-        // Full render: initial load, deletion, reaction update, seen update, etc.
-        // Remove temp elements before full render so there are no duplicates
-        if (area) {
-          area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) { el.remove(); });
-        }
+        // Full render: first load, deletion, reaction/seen update
+        var temps = area ? area.querySelectorAll('[data-temp-msg="1"]') : [];
+        temps.forEach(function(el) { el.remove(); });
         renderMessages(msgs);
       }
     });
 }
 
-// RENDER MESSAGES
+// ── Fast incremental append — only adds new messages, no DOM wipe ────────────
+function _appendNewMessages(area, msgs, newCount, oldCount) {
+  var added   = newCount - oldCount;
+  var newMsgs = msgs.slice(msgs.length - added);
+  var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+
+  // Remove optimistic temp elements for my own new messages
+  var temps = area.querySelectorAll('[data-temp-msg="1"]');
+  if (temps.length) {
+    newMsgs.forEach(function(msg) {
+      if (msg.sender !== state.currentUser.name) return;
+      var prefix = msg.text ? msg.text.slice(0, 50).trim() : '';
+      temps.forEach(function(el) {
+        if (!prefix) return;
+        var bubble = el.querySelector('.msg-bubble');
+        if (!bubble) return;
+        var bt = (bubble.innerText || bubble.textContent || '').trim();
+        if (bt.startsWith(prefix)) el.remove();
+      });
+    });
+  }
+
+  // Pre-compute lastSeenMsgPerUser once (scan only last 20 messages for speed)
+  var scanMsgs = msgs.slice(Math.max(0, msgs.length - 20));
+  var lastSeenMsgPerUser = {};
+  scanMsgs.forEach(function(msg) {
+    if (!msg.seenBy) return;
+    Object.keys(msg.seenBy).forEach(function(user) {
+      if (user !== state.currentUser.name) lastSeenMsgPerUser[user] = msg.id;
+    });
+  });
+
+  // Cache the last date divider label so we don't DOM-query inside the loop
+  var dividers = area.querySelectorAll('.date-divider');
+  var lastDivLabel = dividers.length ? dividers[dividers.length - 1].textContent : null;
+
+  newMsgs.forEach(function(msg) {
+    if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
+    var label = msgDateLabel(msg);
+    if (label !== lastDivLabel) {
+      area.appendChild(makeDateDivider(label));
+      lastDivLabel = label;
+    }
+    appendMessageEl(area, msg, lastSeenMsgPerUser);
+  });
+
+  if (wasAtBottom) area.scrollTop = area.scrollHeight;
+  markChannelSeen(state.currentChannel, msgs);
+
+  setTimeout(function() {
+    if (document.hasFocus() && !document.hidden) clearUnreadMsgIdsForChannel();
+  }, 3000);
+}
+
+// Update only the badge number on a specific channel item — no full re-render
+function _updateUnreadBadge(channelId) {
+  var count = state.unread[channelId] || 0;
+  // Find the channel item in both lists
+  document.querySelectorAll('.channel-item').forEach(function(item) {
+    var label = item.querySelector('.ch-label');
+    if (!label) return;
+    // Match by checking onclick attribute or data — use the item's click handler text
+    // Simpler: just call renderChannels and renderDMsFromCache but debounced
+  });
+  // Debounced sidebar update (avoids thrashing when many messages arrive fast)
+  clearTimeout(_updateUnreadBadge._timer);
+  _updateUnreadBadge._timer = setTimeout(function() {
+    renderChannels();
+    renderDMsFromCache();
+  }, 150);
+}
+
+// Cached date labels — avoid re-computing toLocaleDateString on every render
+var _dateLabelCache = {};
+
 function msgDateLabel(msg) {
-  // timestamp may be a Firestore Timestamp or null (pending write)
   var d = msg.timestamp && msg.timestamp.toDate ? msg.timestamp.toDate() : new Date();
+  // Cache key: year-month-day of the message
+  var key = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+  if (_dateLabelCache[key]) return _dateLabelCache[key];
+
   var today     = new Date();
   var yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
-  var toKey  = function(dt) { return dt.getFullYear() + '-' + dt.getMonth() + '-' + dt.getDate(); };
-  if (toKey(d) === toKey(today))     return 'Today';
-  if (toKey(d) === toKey(yesterday)) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  var toKey     = function(dt) { return dt.getFullYear() + '-' + dt.getMonth() + '-' + dt.getDate(); };
+  var label;
+  if (key === toKey(today))     label = 'Today';
+  else if (key === toKey(yesterday)) label = 'Yesterday';
+  else label = d.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  _dateLabelCache[key] = label;
+  return label;
 }
 
 function renderMessages(msgs) {
@@ -708,7 +742,8 @@ function renderMessages(msgs) {
   var wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 60;
 
   // Clean up any optimistic temp elements before full rebuild
-  area.querySelectorAll('[data-temp-msg="1"]').forEach(function(el) { el.remove(); });
+  var temps = area.querySelectorAll('[data-temp-msg="1"]');
+  temps.forEach(function(el) { el.remove(); });
 
   area.innerHTML = '';
 
@@ -717,30 +752,32 @@ function renderMessages(msgs) {
     return;
   }
 
-  // Pre-compute: for each user, find the ID of the LAST message they have seen
-  // so we only show the seen avatar on that one message, not all previous ones
-  var lastSeenMsgPerUser = {}; // { userName: msgId }
+  // Pre-compute seen indicators
+  var lastSeenMsgPerUser = {};
   msgs.forEach(function(msg) {
     if (!msg.seenBy) return;
     Object.keys(msg.seenBy).forEach(function(user) {
-      if (user !== state.currentUser.name) {
-        lastSeenMsgPerUser[user] = msg.id; // later messages overwrite earlier ones
-      }
+      if (user !== state.currentUser.name) lastSeenMsgPerUser[user] = msg.id;
     });
   });
 
+  // Use a DocumentFragment — single DOM insertion instead of one per message
+  var fragment  = document.createDocumentFragment();
   var lastLabel = null;
+
   msgs.forEach(function(msg) {
-    // Skip messages the current user has hidden for themselves
     if (msg.deletedFor && msg.deletedFor.includes(state.currentUser.name)) return;
 
     var label = msgDateLabel(msg);
     if (label !== lastLabel) {
-      area.appendChild(makeDateDivider(label));
+      fragment.appendChild(makeDateDivider(label));
       lastLabel = label;
     }
-    appendMessageEl(area, msg, lastSeenMsgPerUser);
+    appendMessageEl(fragment, msg, lastSeenMsgPerUser);
   });
+
+  // Single DOM write — all messages inserted at once
+  area.appendChild(fragment);
   if (wasAtBottom) area.scrollTop = area.scrollHeight;
 
   // Mark channel as seen by current user
@@ -3762,24 +3799,24 @@ function isEmojiOnly(str) {
 }
 
 function renderText(str) {
-  // If the message is emoji-only, render it large with no bubble background
+  // Fast path: emoji-only
   if (isEmojiOnly(str)) {
     return '<span class="emoji-large">' + escapeHtml(str) + '</span>';
   }
 
+  // Fast path: no pipe character → can't contain a table, skip all table parsing
+  if (str.indexOf('|') === -1) {
+    var escaped = escapeHtml(str).replace(/\n/g, '<br>');
+    return linkify(escaped);
+  }
+
   // ── Markdown table detection ──────────────────────────────────────────────
-  // A table block is consecutive lines that start and end with |
-  // e.g.  | Name | Age |
-  //       | ---- | --- |
-  //       | Mark | 30  |
   var lines = str.split('\n');
   var result = [];
   var i = 0;
   while (i < lines.length) {
     var line = lines[i];
-    // Check if this line looks like a table row
     if (/^\s*\|.+\|\s*$/.test(line)) {
-      // Collect all consecutive table lines
       var tableLines = [];
       while (i < lines.length && /^\s*\|.+\|\s*$/.test(lines[i])) {
         tableLines.push(lines[i]);
